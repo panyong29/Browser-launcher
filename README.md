@@ -2,6 +2,10 @@
 
 Windows / macOS / Linux 用的 Chrome / Edge 多配置代理启动器：一个配置 = 一个浏览器 + 一个代理 + 一组网址，每个配置用独立的用户数据目录启动，互不干扰。同一配置的多个网址：第一个开新窗口，后面的开成这个窗口的标签页。
 
+## 界面截图
+
+<img src="images/screenshot.png" width="720" alt="浏览器多配置代理启动器界面">
+
 ## 版本
 
 - browser-launcher.ps1：命令行版（Windows PowerShell），菜单选编号启动
