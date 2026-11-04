@@ -1,16 +1,16 @@
 ﻿# ============================================================
-# 浏览器多配置代理启动器（可视化配置版，Chrome / Edge，Windows）
+# 浏览器多配置代理启动器（可视化配置版，Chrome / Edge / fingerprint，Windows）
 # 用法：powershell -ExecutionPolicy Bypass -File .\browser-launcher-visual.ps1
-# 配置存在 profiles.json（和脚本放同一目录），界面里可新增、编辑、删除、
+# 配置存在 profiles.json（和脚本放同一目录，与跨平台版 browser-launcher.py 格式通用），界面里可新增、编辑、删除、
 # 导入、导出；第一次运行没有 profiles.json 时会自动按默认配置生成一个。
 # ============================================================
 
 # ---------------- 默认配置（只在没有 profiles.json 时用一次） ----------------
 $script:BaseDir = "D:\browser-launcher"
 $script:Profiles = @(
-    [PSCustomObject]@{ name = "VPS美国";   browser = "chrome"; proxy = "socks5://你的服务器IP:1080"; urls = @("https://ippure.com/", "https://www.google.com", "https://www.youtube.com") },
-    [PSCustomObject]@{ name = "本地10808"; browser = "chrome"; proxy = "socks5://127.0.0.1:10808";      urls = @("https://ippure.com/", "https://x.com") },
-    [PSCustomObject]@{ name = "Edge直连";   browser = "edge";   proxy = "";                              urls = @("https://ippure.com/", "https://www.bing.com") }
+    [PSCustomObject]@{ name = "VPS美国";   browser = "chrome"; proxy = "socks5://你的服务器IP:1080"; browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://www.google.com", "https://www.youtube.com") },
+    [PSCustomObject]@{ name = "本地10808"; browser = "chrome"; proxy = "socks5://127.0.0.1:10808";      browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://x.com") },
+    [PSCustomObject]@{ name = "Edge直连";   browser = "edge";   proxy = "";                              browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://www.bing.com") }
 )
 # ---------------- 默认配置结束 ----------------
 
@@ -27,7 +27,9 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-function Get-BrowserPath($browser) {
+function Get-BrowserPath($browser, $browserPath) {
+    if ($browserPath -and (Test-Path $browserPath)) { return $browserPath }
+    $local = $env:LOCALAPPDATA
     $candidates = switch ($browser) {
         "chrome" { @(
             "C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -37,10 +39,43 @@ function Get-BrowserPath($browser) {
             "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             "C:\Program Files\Microsoft\Edge\Application\msedge.exe"
         ) }
+        "fingerprint" { @(
+            (Join-Path $local "Chromium\Application\chrome.exe"),
+            "C:\Program Files\Chromium\Application\chrome.exe",
+            "C:\Program Files (x86)\Chromium\Application\chrome.exe"
+        ) }
         default { @() }
     }
-    foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
+    foreach ($p in $candidates) { if ($p -and (Test-Path $p)) { return $p } }
     return $null
+}
+
+function Get-Crc32($text) {
+    # 与 Python zlib.crc32 相同的 IEEE CRC32，种子留空时按配置名回落用。
+    # 校验：Get-Crc32 "HK_chromium" 应为 -1744200419。
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+    $crc = [uint32]4294967295
+    foreach ($b in $bytes) {
+        $crc = [uint32]($crc -bxor $b)
+        for ($i = 0; $i -lt 8; $i++) {
+            if (($crc -band 1) -eq 1) { $crc = [uint32](($crc -shr 1) -bxor 0xEDB88320) } else { $crc = [uint32]($crc -shr 1) }
+        }
+    }
+    $crc = [uint32]($crc -bxor 4294967295)
+    if ($crc -gt 2147483647) { return [int64]$crc - 4294967296 } else { return [int64]$crc }
+}
+
+function Get-UseFingerprint($p) {
+    # 旧配置没有 use_fingerprint 字段时：浏览器是 fingerprint 默认开，其他默认关（与 py 版一致）。
+    if ($p.PSObject.Properties.Name -contains "use_fingerprint") { return [bool]$p.use_fingerprint }
+    return ($p.browser -eq "fingerprint")
+}
+
+function Get-FingerprintSeed($p) {
+    $raw = "$($p.fingerprint_seed)".Trim()
+    $val = 0
+    if ($raw -ne "" -and [int]::TryParse($raw, [ref]$val) -and $val -ge -2147483648 -and $val -le 2147483647) { return $val }
+    return (Get-Crc32 $p.name)
 }
 
 function Write-Log($msg) {
@@ -77,6 +112,8 @@ function Refresh-List {
         $item = New-Object System.Windows.Forms.ListViewItem($p.name)
         [void]$item.SubItems.Add($p.browser)
         [void]$item.SubItems.Add($(if ($p.proxy) { $p.proxy } else { "直连" }))
+        [void]$item.SubItems.Add($(if ($p.lang) { $p.lang } else { "" }))
+        [void]$item.SubItems.Add($(if ($p.timezone) { $p.timezone } else { "" }))
         [void]$item.SubItems.Add("$($p.urls.Count)")
         $item.Tag = $p
         [void]$script:listView.Items.Add($item)
@@ -89,13 +126,39 @@ function Get-SelectedProfile {
 }
 
 function Start-Profile($p) {
-    $exe = Get-BrowserPath $p.browser
-    if (-not $exe) { Write-Log "[!] 没找到 $($p.browser)，跳过 [$($p.name)]"; return }
+    $exe = Get-BrowserPath $p.browser $p.browser_path
+    if (-not $exe) { Write-Log "[!] 没找到 $($p.browser)，跳过 [$($p.name)]（请在编辑里填浏览器 exe 路径）"; return }
     $dataDir = Join-Path $script:BaseDir ("{0}-{1}" -f $p.browser, $p.name)
     $baseArgs = @("--user-data-dir=$dataDir", "--no-first-run")
+    $useFp = ($p.browser -eq "fingerprint") -and (Get-UseFingerprint $p)
+    if ($useFp) {
+        $baseArgs += "--fingerprint=$(Get-FingerprintSeed $p)"
+        if ($p.disable_spoofing) { $baseArgs += "--disable-spoofing=$($p.disable_spoofing)" }
+        if ($p.fingerprint_platform) { $baseArgs += "--fingerprint-platform=$($p.fingerprint_platform)" }
+    }
     if ($p.proxy) { $baseArgs += "--proxy-server=$($p.proxy)" }
+    if ($p.lang) { $baseArgs += "--lang=$($p.lang)"; $baseArgs += "--accept-lang=$($p.lang)" }
+    if ($p.timezone) {
+        if ($p.browser -eq "fingerprint") {
+            # fingerprint-chromium 自带 --timezone 补丁，Windows 下也能生效；开关关了也传时区。
+            $baseArgs += "--timezone=$($p.timezone)"
+        } else {
+            Write-Log "[!] [$($p.name)] Windows 下原版浏览器不认时区，填的时区 $($p.timezone) 未生效"
+        }
+    }
     $proxyText = if ($p.proxy) { $p.proxy } else { "直连" }
-    Write-Log "启动 [$($p.name)] $($p.browser)，代理：$proxyText"
+    $logParts = @("启动 [$($p.name)] $($p.browser)，代理：$proxyText")
+    if ($p.browser -eq "fingerprint") {
+        if ($useFp) {
+            $logParts += "指纹种子：$(Get-FingerprintSeed $p)"
+            if ($p.disable_spoofing) { $logParts += "关闭伪装：$($p.disable_spoofing)" }
+        } else {
+            $logParts += "指纹：关（只用语言/时区）"
+        }
+    }
+    if ($p.lang) { $logParts += "语言：$($p.lang)" }
+    if ($p.timezone -and $p.browser -eq "fingerprint") { $logParts += "时区：$($p.timezone)" }
+    Write-Log ($logParts -join "，")
     $first = $true
     foreach ($url in $p.urls) {
         if ($first) {
@@ -110,66 +173,111 @@ function Start-Profile($p) {
     Write-Log "完成 [$($p.name)]，1 个窗口、$($p.urls.Count) 个标签页"
 }
 
+
 function Show-ProfileDialog($p) {
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text = if ($p.name) { "编辑配置" } else { "新增配置" }
-    $dlg.Size = New-Object System.Drawing.Size(480, 400)
+    $dlg.Size = New-Object System.Drawing.Size(480, 760)
     $dlg.StartPosition = "CenterScreen"
     $dlg.FormBorderStyle = "FixedDialog"
     $dlg.MaximizeBox = $false
     $dlg.Font = New-Object System.Drawing.Font("微软雅黑", 10)
 
-    $lblName = New-Object System.Windows.Forms.Label
-    $lblName.Text = "名字："; $lblName.Location = New-Object System.Drawing.Point(20, 20); $lblName.AutoSize = $true
-    $dlg.Controls.Add($lblName)
-    $txtName = New-Object System.Windows.Forms.TextBox
-    $txtName.Location = New-Object System.Drawing.Point(110, 18); $txtName.Size = New-Object System.Drawing.Size(340, 26)
-    $txtName.Text = $p.name
-    $dlg.Controls.Add($txtName)
+    function Add-Field($label, $y, $control) {
+        $l = New-Object System.Windows.Forms.Label
+        $l.Text = $label; $l.Location = New-Object System.Drawing.Point(20, $y); $l.AutoSize = $true
+        $dlg.Controls.Add($l)
+        $control.Location = New-Object System.Drawing.Point(110, ($y - 2))
+        $control.Size = New-Object System.Drawing.Size(340, 26)
+        $dlg.Controls.Add($control)
+        return $l
+    }
+    function Add-Hint($hint, $y) {
+        $l = New-Object System.Windows.Forms.Label
+        $l.Text = $hint; $l.Location = New-Object System.Drawing.Point(110, $y); $l.AutoSize = $true
+        $dlg.Controls.Add($l)
+        return $l
+    }
 
-    $lblBrowser = New-Object System.Windows.Forms.Label
-    $lblBrowser.Text = "浏览器："; $lblBrowser.Location = New-Object System.Drawing.Point(20, 60); $lblBrowser.AutoSize = $true
-    $dlg.Controls.Add($lblBrowser)
+    $txtName = New-Object System.Windows.Forms.TextBox; $txtName.Text = $p.name
+    Add-Field "名字：" 20 $txtName | Out-Null
+
     $cmbBrowser = New-Object System.Windows.Forms.ComboBox
     $cmbBrowser.DropDownStyle = "DropDownList"
-    $cmbBrowser.Location = New-Object System.Drawing.Point(110, 58); $cmbBrowser.Size = New-Object System.Drawing.Size(150, 26)
-    [void]$cmbBrowser.Items.AddRange(@("chrome", "edge"))
-    if ($p.browser -eq "edge") { $cmbBrowser.SelectedIndex = 1 } else { $cmbBrowser.SelectedIndex = 0 }
-    $dlg.Controls.Add($cmbBrowser)
+    $cmbBrowser.Size = New-Object System.Drawing.Size(150, 26)
+    [void]$cmbBrowser.Items.AddRange(@("chrome", "edge", "fingerprint"))
+    $cmbBrowser.SelectedItem = if ($p.browser -in @("chrome", "edge", "fingerprint")) { $p.browser } else { "chrome" }
+    Add-Field "浏览器：" 60 $cmbBrowser | Out-Null
 
-    $lblProxy = New-Object System.Windows.Forms.Label
-    $lblProxy.Text = "代理："; $lblProxy.Location = New-Object System.Drawing.Point(20, 100); $lblProxy.AutoSize = $true
-    $dlg.Controls.Add($lblProxy)
-    $txtProxy = New-Object System.Windows.Forms.TextBox
-    $txtProxy.Location = New-Object System.Drawing.Point(110, 98); $txtProxy.Size = New-Object System.Drawing.Size(340, 26)
-    $txtProxy.Text = $p.proxy
-    $dlg.Controls.Add($txtProxy)
-    $lblProxyHint = New-Object System.Windows.Forms.Label
-    $lblProxyHint.Text = "(留空 = 直连，例如 socks5://127.0.0.1:10808)"
-    $lblProxyHint.Location = New-Object System.Drawing.Point(110, 128); $lblProxyHint.AutoSize = $true
-    $dlg.Controls.Add($lblProxyHint)
+    $txtProxy = New-Object System.Windows.Forms.TextBox; $txtProxy.Text = $p.proxy
+    Add-Field "代理：" 100 $txtProxy | Out-Null
+    Add-Hint "(留空 = 直连，例如 socks5://127.0.0.1:10808)" 128 | Out-Null
+
+    $txtLang = New-Object System.Windows.Forms.TextBox; $txtLang.Text = $p.lang
+    Add-Field "启动语言：" 155 $txtLang | Out-Null
+    Add-Hint "(留空 = 跟系统，例如 en-US、zh-CN)" 183 | Out-Null
+
+    $txtTimezone = New-Object System.Windows.Forms.TextBox; $txtTimezone.Text = $p.timezone
+    Add-Field "启动时区：" 210 $txtTimezone | Out-Null
+    Add-Hint "(留空 = 跟系统，例如 America/New_York；Windows 下原版浏览器不认时区)" 238 | Out-Null
+
+    # 浏览器 exe 路径是通用字段，不是只属于指纹：任何浏览器填了且文件存在就优先用它，永远显示。
+    $txtBrowserPath = New-Object System.Windows.Forms.TextBox; $txtBrowserPath.Text = $p.browser_path
+    Add-Field "浏览器 exe 路径：" 265 $txtBrowserPath | Out-Null
+    Add-Hint "(留空自动找；fingerprint 安装位置不固定，填它自己的 exe 最稳)" 293 | Out-Null
 
     $lblUrls = New-Object System.Windows.Forms.Label
-    $lblUrls.Text = "网址："; $lblUrls.Location = New-Object System.Drawing.Point(20, 155); $lblUrls.AutoSize = $true
+    $lblUrls.Text = "网址："; $lblUrls.Location = New-Object System.Drawing.Point(20, 320); $lblUrls.AutoSize = $true
     $dlg.Controls.Add($lblUrls)
     $txtUrls = New-Object System.Windows.Forms.TextBox
     $txtUrls.Multiline = $true; $txtUrls.ScrollBars = "Vertical"
-    $txtUrls.Location = New-Object System.Drawing.Point(110, 153); $txtUrls.Size = New-Object System.Drawing.Size(340, 130)
+    $txtUrls.Location = New-Object System.Drawing.Point(110, 318); $txtUrls.Size = New-Object System.Drawing.Size(340, 110)
     if ($p.urls) { $txtUrls.Text = ($p.urls -join "`r`n") }
     $dlg.Controls.Add($txtUrls)
-    $lblUrlsHint = New-Object System.Windows.Forms.Label
-    $lblUrlsHint.Text = "(每行一个网址，第一个开新窗口，后面的开成标签页)"
-    $lblUrlsHint.Location = New-Object System.Drawing.Point(110, 288); $lblUrlsHint.AutoSize = $true
-    $dlg.Controls.Add($lblUrlsHint)
+    Add-Hint "(每行一个网址，第一个开新窗口，后面的开成标签页)" 432 | Out-Null
+
+    # 指纹开关：只有浏览器选了 fingerprint 时才显示；开了才展开下面参数。
+    $lblFpSwitch = New-Object System.Windows.Forms.Label
+    $lblFpSwitch.Text = "指纹开关："; $lblFpSwitch.Location = New-Object System.Drawing.Point(20, 460); $lblFpSwitch.AutoSize = $true
+    $dlg.Controls.Add($lblFpSwitch)
+    $chkUseFp = New-Object System.Windows.Forms.CheckBox
+    $chkUseFp.Text = "使用指纹（fingerprint-chromium）"
+    $chkUseFp.Location = New-Object System.Drawing.Point(110, 458); $chkUseFp.AutoSize = $true
+    $chkUseFp.Checked = (Get-UseFingerprint $p)
+    $dlg.Controls.Add($chkUseFp)
+    $lblFpHint = Add-Hint "(关 = 不传指纹，只用语言/时区；开 = 展开下面参数)" 488
+
+    $txtSeed = New-Object System.Windows.Forms.TextBox; $txtSeed.Text = $p.fingerprint_seed
+    $lblSeed = Add-Field "指纹种子：" 515 $txtSeed
+    $lblSeedHint = Add-Hint "(32 位整数；留空按配置名自动生成固定种子)" 543
+
+    $txtDisable = New-Object System.Windows.Forms.TextBox; $txtDisable.Text = $p.disable_spoofing
+    $lblDisable = Add-Field "关闭伪装：" 570 $txtDisable
+    $lblDisableHint = Add-Hint "(逗号分隔，如 font,audio,canvas,clientrects,gpu；留空 = 全开)" 598
+
+    $txtPlatform = New-Object System.Windows.Forms.TextBox; $txtPlatform.Text = $p.fingerprint_platform
+    $lblPlatform = Add-Field "操作系统：" 625 $txtPlatform
+    $lblPlatformHint = Add-Hint "(如 windows、linux、macos；留空 = 种子随机生成)" 653
+
+    $fpDetail = @($lblSeed, $txtSeed, $lblSeedHint, $lblDisable, $txtDisable, $lblDisableHint, $lblPlatform, $txtPlatform, $lblPlatformHint)
+    $refreshFp = {
+        $isFp = ($cmbBrowser.SelectedItem -eq "fingerprint")
+        $lblFpSwitch.Visible = $isFp; $chkUseFp.Visible = $isFp; $lblFpHint.Visible = $isFp
+        $show = $isFp -and $chkUseFp.Checked
+        foreach ($c in $fpDetail) { $c.Visible = $show }
+    }
+    $cmbBrowser.Add_SelectedIndexChanged($refreshFp.GetNewClosure())
+    $chkUseFp.Add_CheckedChanged($refreshFp.GetNewClosure())
+    & $refreshFp
 
     $btnOK = New-Object System.Windows.Forms.Button
     $btnOK.Text = "保存"; $btnOK.Size = New-Object System.Drawing.Size(80, 32)
-    $btnOK.Location = New-Object System.Drawing.Point(270, 320)
+    $btnOK.Location = New-Object System.Drawing.Point(270, 685)
     $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $dlg.Controls.Add($btnOK)
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = "取消"; $btnCancel.Size = New-Object System.Drawing.Size(80, 32)
-    $btnCancel.Location = New-Object System.Drawing.Point(360, 320)
+    $btnCancel.Location = New-Object System.Drawing.Point(360, 685)
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $dlg.Controls.Add($btnCancel)
     $dlg.AcceptButton = $btnOK
@@ -183,6 +291,13 @@ function Show-ProfileDialog($p) {
     $p.name = $txtName.Text.Trim()
     $p.browser = $cmbBrowser.SelectedItem
     $p.proxy = $txtProxy.Text.Trim()
+    $p.lang = $txtLang.Text.Trim()
+    $p.timezone = $txtTimezone.Text.Trim()
+    $p.browser_path = $txtBrowserPath.Text.Trim()
+    $p.use_fingerprint = [bool]$chkUseFp.Checked
+    $p.fingerprint_seed = $txtSeed.Text.Trim()
+    $p.disable_spoofing = $txtDisable.Text.Trim()
+    $p.fingerprint_platform = $txtPlatform.Text.Trim()
     $p.urls = @($txtUrls.Lines | Where-Object { $_.Trim() -ne "" } | ForEach-Object { $_.Trim() })
     return $true
 }
@@ -209,10 +324,12 @@ $script:listView.MultiSelect = $false
 $script:listView.GridLines = $true
 $script:listView.Location = New-Object System.Drawing.Point(20, 40)
 $script:listView.Size = New-Object System.Drawing.Size(600, 230)
-[void]$script:listView.Columns.Add("名字", 130)
-[void]$script:listView.Columns.Add("浏览器", 90)
-[void]$script:listView.Columns.Add("代理", 280)
-[void]$script:listView.Columns.Add("网址数", 70)
+[void]$script:listView.Columns.Add("名字", 100)
+[void]$script:listView.Columns.Add("浏览器", 80)
+[void]$script:listView.Columns.Add("代理", 180)
+[void]$script:listView.Columns.Add("语言", 60)
+[void]$script:listView.Columns.Add("时区", 110)
+[void]$script:listView.Columns.Add("网址数", 60)
 $script:listView.Add_DoubleClick({
     $sel = Get-SelectedProfile
     if ($sel) { Start-Profile $sel }
@@ -237,7 +354,7 @@ Add-RowButton "全部启动" 138 {
     foreach ($p in $script:Profiles) { Start-Profile $p }
 }
 Add-RowButton "新增" 256 {
-    $new = [PSCustomObject]@{ name = ""; browser = "chrome"; proxy = ""; urls = @() }
+    $new = [PSCustomObject]@{ name = ""; browser = "chrome"; proxy = ""; browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @() }
     if (Show-ProfileDialog $new) {
         $script:Profiles += $new
         Save-Config; Refresh-List

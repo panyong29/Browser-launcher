@@ -1,7 +1,7 @@
 ﻿# ============================================================
-# 浏览器多配置代理启动器（图形界面版，Chrome / Edge，Windows）
+# 浏览器多配置代理启动器（图形界面版，Chrome / Edge / fingerprint，Windows）
 # 用法：powershell -ExecutionPolicy Bypass -File .\browser-launcher-gui.ps1
-# 配置只改「配置区」，每行一个配置：名字、浏览器、代理、要打开的网址
+# 配置只改「配置区」，每行一个配置：名字、浏览器、代理、网址，另可填语言、时区、exe 路径、指纹开关及指纹参数（与跨平台版格式对应）
 # ============================================================
 
 # ---------------- 配置区 ----------------
@@ -9,9 +9,9 @@ $BaseDir = "D:\browser-launcher"   # 每个配置的独立数据目录放这里�
 
 $Profiles = @(
     # 名字随便起；Proxy 为空 = 直连；第一个网址开新窗口，后面的开成标签页
-    @{ Name = "VPS美国";   Browser = "chrome"; Proxy = "socks5://你的服务器IP:1080"; Urls = @("https://www.google.com", "https://www.youtube.com") },
-    @{ Name = "本地10808"; Browser = "chrome"; Proxy = "socks5://127.0.0.1:10808";      Urls = @("https://x.com") },
-    @{ Name = "Edge直连";   Browser = "edge";   Proxy = "";                              Urls = @("https://www.bing.com") }
+    @{ Name = "VPS美国";   Browser = "chrome"; Proxy = "socks5://你的服务器IP:1080"; Urls = @("https://www.google.com", "https://www.youtube.com"); BrowserPath = ""; UseFingerprint = $false; FingerprintSeed = ""; FingerprintPlatform = ""; DisableSpoofing = ""; Lang = ""; Timezone = "" },
+    @{ Name = "本地10808"; Browser = "chrome"; Proxy = "socks5://127.0.0.1:10808";      Urls = @("https://x.com"); BrowserPath = ""; UseFingerprint = $false; FingerprintSeed = ""; FingerprintPlatform = ""; DisableSpoofing = ""; Lang = ""; Timezone = "" },
+    @{ Name = "Edge直连";   Browser = "edge";   Proxy = "";                              Urls = @("https://www.bing.com"); BrowserPath = ""; UseFingerprint = $false; FingerprintSeed = ""; FingerprintPlatform = ""; DisableSpoofing = ""; Lang = ""; Timezone = "" }
 )
 # ---------------- 配置区结束 ----------------
 
@@ -25,7 +25,9 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-function Get-BrowserPath($browser) {
+function Get-BrowserPath($browser, $browserPath) {
+    if ($browserPath -and (Test-Path $browserPath)) { return $browserPath }
+    $local = $env:LOCALAPPDATA
     $candidates = switch ($browser) {
         "chrome" { @(
             "C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -35,10 +37,35 @@ function Get-BrowserPath($browser) {
             "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             "C:\Program Files\Microsoft\Edge\Application\msedge.exe"
         ) }
+        "fingerprint" { @(
+            (Join-Path $local "Chromium\Application\chrome.exe"),
+            "C:\Program Files\Chromium\Application\chrome.exe",
+            "C:\Program Files (x86)\Chromium\Application\chrome.exe"
+        ) }
         default { @() }
     }
-    foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
+    foreach ($p in $candidates) { if ($p -and (Test-Path $p)) { return $p } }
     return $null
+}
+
+function Get-Crc32($text) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+    $crc = [uint32]4294967295
+    foreach ($b in $bytes) {
+        $crc = [uint32]($crc -bxor $b)
+        for ($i = 0; $i -lt 8; $i++) {
+            if (($crc -band 1) -eq 1) { $crc = [uint32](($crc -shr 1) -bxor 0xEDB88320) } else { $crc = [uint32]($crc -shr 1) }
+        }
+    }
+    $crc = [uint32]($crc -bxor 4294967295)
+    if ($crc -gt 2147483647) { return [int64]$crc - 4294967296 } else { return [int64]$crc }
+}
+
+function Get-FingerprintSeed($p) {
+    $raw = "$($p.FingerprintSeed)".Trim()
+    $val = 0
+    if ($raw -ne "" -and [int]::TryParse($raw, [ref]$val) -and $val -ge -2147483648 -and $val -le 2147483647) { return $val }
+    return (Get-Crc32 $p.Name)
 }
 
 function Write-Log($msg) {
@@ -47,10 +74,18 @@ function Write-Log($msg) {
 }
 
 function Start-Profile($p) {
-    $exe = Get-BrowserPath $p.Browser
+    $exe = Get-BrowserPath $p.Browser $p.BrowserPath
     if (-not $exe) { Write-Log "[!] 没找到 $($p.Browser)，跳过 [$($p.Name)]"; return }
     $dataDir = Join-Path $BaseDir ("{0}-{1}" -f $p.Browser, $p.Name)
     $baseArgs = @("--user-data-dir=$dataDir", "--no-first-run")
+    $useFp = ($p.Browser -eq "fingerprint") -and [bool]$p.UseFingerprint
+    if ($useFp) {
+        $baseArgs += "--fingerprint=$(Get-FingerprintSeed $p)"
+        if ($p.DisableSpoofing) { $baseArgs += "--disable-spoofing=$($p.DisableSpoofing)" }
+        if ($p.FingerprintPlatform) { $baseArgs += "--fingerprint-platform=$($p.FingerprintPlatform)" }
+    }
+    if ($p.Lang) { $baseArgs += "--lang=$($p.Lang)"; $baseArgs += "--accept-lang=$($p.Lang)" }
+    if ($p.Timezone -and $p.Browser -eq "fingerprint") { $baseArgs += "--timezone=$($p.Timezone)" }
     if ($p.Proxy) { $baseArgs += "--proxy-server=$($p.Proxy)" }
     $proxyText = if ($p.Proxy) { $p.Proxy } else { "直连" }
     Write-Log "启动 [$($p.Name)] $($p.Browser)，代理：$proxyText"
