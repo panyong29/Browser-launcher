@@ -12,6 +12,19 @@ Windows / macOS / Linux 用的 Chrome / Edge / fingerprint-chromium 多配置代
 - browser-launcher-gui.ps1：图形界面版（Windows），每配置一个按钮；配置同样写在脚本“配置区”，可填语言、时区、exe 路径、指纹开关及指纹参数
 - browser-launcher-visual.ps1：可视化配置版（Windows，推荐），配置存在 profiles.json，界面里可新增、编辑、删除、导入、导出，编辑框里有语言、时区、exe 路径、指纹开关及指纹参数
 - browser-launcher.py：跨平台版（Windows / macOS / Linux），界面用各系统自带的 tkinter，功能与可视化配置版相同
+- BrowserLauncher.CSharp：C# Windows 图形界面版，支持 profiles.json 读写、新增/编辑/删除配置、导入/导出、启动选中或全部配置；exe 可从 Releases 下载
+
+### C# 版下载与运行
+
+在 [Releases](https://github.com/panyong29/Browser-launcher/releases) 下载最新的 `BrowserLauncher.CSharp.exe`，无需单独安装 .NET。首次运行时会在 exe 同目录生成 `profiles.json`；把它与其他版本共用时，建议先备份配置文件。该版本面向 Windows x64，启动的浏览器仍需预先安装。
+
+源码构建需要 .NET 8 SDK：
+
+```powershell
+dotnet publish .\BrowserLauncher.CSharp\BrowserLauncher.CSharp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+```
+
+推送 `csharp-v*` 格式的标签（例如 `csharp-v1.0.0`）会自动构建 Windows x64 单文件 exe 并创建 GitHub Release。
 
 ## 运行
 
