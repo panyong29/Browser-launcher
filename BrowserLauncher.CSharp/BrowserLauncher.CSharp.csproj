@@ -4,6 +4,7 @@
     <TargetFramework>net48</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>BrowserLauncher.CSharp</AssemblyName>
     <RootNamespace>BrowserLauncher.CSharp</RootNamespace>
