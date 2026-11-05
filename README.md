@@ -54,14 +54,40 @@ profiles.json 是示例配置，和 PowerShell 版格式通用，两个版本可
 
 ## 启动语言、启动时区和指纹（跨平台版与 PowerShell 版通用）
 
-- 启动语言：填了就传 `--lang` 和 `--accept-lang`，各系统都生效。
-- 启动时区：原版 Chrome / Edge 没有 `--timezone` 参数，时区默认跟系统；Linux / macOS 下本脚本用 `TZ` 环境变量给子进程传时区，能生效；Windows 下原版浏览器填了时区也不会生效，启动器只会在日志里明说，不会假装已生效。
-- fingerprint 浏览器例外：它是打了指纹补丁的改版 Chromium，自带 `--timezone` 补丁，启动时传 `--timezone=<时区>`，Windows 下也能生效。浏览器选 `fingerprint`，并在“浏览器 exe 路径”里填它自己的 exe（一般在安装目录的 `Application\chrome.exe`），留空时按常见 Chromium 安装位置自动找。
-- 指纹开关（use_fingerprint）：浏览器选 `fingerprint` 时才显示，关了就不传 `--fingerprint`，只用语言、时区、代理，这是只想设置语言和时区、不想开任何伪装时的用法；开了才展开下面参数（指纹种子、关闭伪装、操作系统）。浏览器 exe 路径是通用字段，不属于指纹选项，开关关了也照常显示。`--fingerprint` 必须带 32 位整数种子，裸传 `--fingerprint` 是错的；开关开了、种子留空时按配置名自动生成固定种子（跨平台版用 CRC32，PowerShell 版用同一算法的 CRC32，两边同一配置名算出同一种子）。旧配置没有开关字段时，浏览器是 `fingerprint` 的默认开、是 chrome / edge 的默认关。
-- PowerShell 版注意：本机 Linux 环境没有 PowerShell，`ps1` 版无法在本机实跑，只能做括号平衡、字段和脱敏检查；Windows 上首次运行时请先核对：可视化版编辑框里浏览器选 `fingerprint` 时开关出现、开关开/关时种子等三格展开/收起，exe 路径始终可见；种子留空时启动日志里的种子应与跨平台版一致（校验：配置名 `HK_chromium` 留空时种子应为 `-1744200419`）。
-- 关闭伪装（disable_spoofing）：仅在传了指纹种子时有意义，逗号分隔，可填的 5 类是 `font,audio,canvas,clientrects,gpu`，全关就填 `font,audio,canvas,clientrects,gpu`。注意：Windows 上 fingerprint 150 版手动测试多次出现 Aw Snap / Crashpad_NotConnectedToHandler，但二次测试结果完全不同，时区、种子、画布/元素尺寸等结论均未复现，目前无可靠定论；唯一一次用户报告能用的组合是 `--fingerprint=2023 --fingerprint-platform=windows --disable-spoofing=gpu`，且用户随后确认起作用的是 `--disable-spoofing=gpu` 这一项。GPU 伪装的崩溃原理：伪装报了一套按种子算出的 GPU 参数，真实显卡驱动兑现不了，页面一调用 WebGL 渲染进程就死掉；关掉 GPU 伪装后报的就是真实显卡参数，页面就能正常跑。复测须用全新数据目录、彻底关进程、同一组参数跑两次结果一致才算数。
-- 验 GPU 伪装是否关掉：在浏览器里按 F12，进 Console 输一段 WebGL 代码读 `UNMASKED_VENDOR_WEBGL` / `UNMASKED_RENDERER_WEBGL`，与任务管理器 → 性能 → GPU 里的真实显卡名对比；或换一个种子再跑一次，输出不变就是真显卡，换种子就换显卡就是还在伪装。
-- 验时区：在 fingerprint 打开的浏览器里按 F12，进 Console 输 `Intl.DateTimeFormat().resolvedOptions().timeZone`，显示的时区应是你填的那个，而不是系统时区。
+### 启动语言和时区
+
+- **启动语言（`lang`）**：填写后会传入 `--lang` 和 `--accept-lang`，各系统均生效；留空则跟随系统。
+- **启动时区（`timezone`）**：留空则跟随系统。原版 Chrome / Edge 没有 `--timezone` 参数：Linux / macOS 版通过 `TZ` 环境变量设置子进程时区；Windows 上原版浏览器仍使用系统时区，启动器会在日志中提示该设置未生效。
+- **fingerprint 浏览器**：它是带指纹补丁的 Chromium，支持 `--timezone=<时区>`，Windows 上也能设置时区。请选择 `fingerprint`，并在“浏览器 exe 路径”中指定它自己的 exe（通常位于安装目录的 `Application\chrome.exe`）；路径留空时会尝试自动查找。
+
+### 指纹开关和参数
+
+指纹开关只在浏览器选择 `fingerprint` 时显示。关闭开关时不传 `--fingerprint`，只应用语言、时区和代理；开启后才显示指纹种子、操作系统和关闭伪装选项。浏览器 exe 路径是通用设置，不受指纹开关影响。
+
+- **指纹种子（`fingerprint_seed`）**：必须是 32 位整数，不能裸传 `--fingerprint`。留空时会按配置名生成固定种子；跨平台版与 PowerShell 版使用相同的 CRC32 算法。同一配置名会得到相同种子。
+- **操作系统（`fingerprint_platform`）**：仅 fingerprint 使用，可填 `windows`、`linux` 或 `macos`；留空时不强制指定。
+- **关闭伪装（`disable_spoofing`）**：仅在传入指纹种子时有意义。可用值为 `font,audio,canvas,clientrects,gpu`，多个值用逗号分隔；留空表示全部开启。
+- **旧配置兼容**：没有 `use_fingerprint` 字段时，`fingerprint` 默认开启指纹，`chrome` / `edge` 默认关闭。
+
+### PowerShell 版首次运行检查
+
+首次在 Windows 上运行可视化版时，请确认：选择 `fingerprint` 后指纹开关出现；开关关闭时指纹参数折叠，打开时展开；浏览器 exe 路径始终可见。
+
+种子留空时，PowerShell 版和跨平台版的启动日志应一致。校验值：配置名 `HK_chromium` 对应种子 `-1744200419`。
+
+### 指纹排查记录
+
+Windows 上 fingerprint 150 曾多次出现 `Aw Snap` / `Crashpad_NotConnectedToHandler`，但重复测试结果不一致；时区、种子、画布和元素尺寸等原因都没有复现，目前没有可靠结论。曾有一次用户报告以下参数组合可以正常打开百度页，之后确认起作用的是 `--disable-spoofing=gpu`：
+
+```text
+--fingerprint=2023 --fingerprint-platform=windows --disable-spoofing=gpu
+```
+
+GPU 伪装可能向浏览器提供显卡无法兑现的参数，导致页面调用 WebGL 时渲染进程崩溃；关闭 GPU 伪装后浏览器会报告真实显卡参数。复测时请使用全新数据目录、彻底退出浏览器，并确认同一组参数连续两次结果一致。
+
+**检查 GPU 伪装**：按 F12 打开 Console，读取 `UNMASKED_VENDOR_WEBGL` / `UNMASKED_RENDERER_WEBGL`，并与任务管理器“性能 → GPU”中的显卡名称比较。也可以换一个指纹种子：输出不变通常表示使用真实显卡信息，输出随种子变化则表示仍在伪装。
+
+**检查时区**：在 fingerprint 浏览器的 Console 中运行 `Intl.DateTimeFormat().resolvedOptions().timeZone`，结果应与配置的时区一致。
 
 示例里的代理地址是占位符（你的服务器IP），用前改成自己的代理地址。带账号密码的 SOCKS5 代理，浏览器第一次启动时会弹窗让填账号密码。
 
