@@ -17,11 +17,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Publish self-contained single-file executable
+      - name: Publish framework-dependent single-file executable
         run: >-
           dotnet publish BrowserLauncher.CSharp/BrowserLauncher.CSharp.csproj
-          --configuration Release --runtime win-x64 --self-contained true
-          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          --configuration Release --runtime win-x64 --self-contained false
+          -p:PublishSingleFile=true
           -p:DebugType=None -p:DebugSymbols=false
           --output artifacts
       - name: Create GitHub Release and attach executable
