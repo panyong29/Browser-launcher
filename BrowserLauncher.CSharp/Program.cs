@@ -139,29 +139,63 @@ internal sealed class MainForm : Form
 
     private bool EditDialog(BrowserProfile p, bool editing)
     {
-        using var d = new Form { Text = editing ? "编辑配置" : "新增配置", Width = 610, Height = 700, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
+        using var d = new Form { Text = editing ? "编辑配置" : "新增配置", Width = 660, Height = 760, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(12) };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 155)); panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); d.Controls.Add(panel);
-        TextBox AddField(string label, string value, bool multiline = false, int height = 28)
+        var fingerprintToggleControls = new List<Control>();
+        var fingerprintOptionControls = new List<Control>();
+        Label AddHint(string text, bool fingerprintToggle = false, bool fingerprintOption = false)
         {
-            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); panel.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Right, Padding = new Padding(0, 7, 0, 0) }, 0, panel.RowCount);
-            var box = new TextBox { Text = value, Dock = DockStyle.Fill, Multiline = multiline, Height = height, ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None };
-            panel.Controls.Add(box, 1, panel.RowCount); panel.RowCount++; return box;
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var hint = new Label { Text = text, AutoSize = true, MaximumSize = new Size(420, 0), ForeColor = SystemColors.GrayText, Padding = new Padding(0, 0, 0, 5) };
+            panel.Controls.Add(hint, 1, panel.RowCount++);
+            if (fingerprintToggle) fingerprintToggleControls.Add(hint);
+            if (fingerprintOption) fingerprintOptionControls.Add(hint);
+            return hint;
         }
-        var name = AddField("名字", p.Name);
+        TextBox AddField(string label, string value, string hint, bool multiline = false, int height = 28, bool fingerprintOption = false)
+        {
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var labelControl = new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Right, Padding = new Padding(0, 7, 0, 0) };
+            var box = new TextBox { Text = value, Dock = DockStyle.Fill, Multiline = multiline, Height = height, ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None };
+            panel.Controls.Add(labelControl, 0, panel.RowCount); panel.Controls.Add(box, 1, panel.RowCount++);
+            if (fingerprintOption) { fingerprintOptionControls.Add(labelControl); fingerprintOptionControls.Add(box); }
+            if (!string.IsNullOrWhiteSpace(hint)) AddHint(hint, fingerprintOption: fingerprintOption);
+            return box;
+        }
+        var name = AddField("名字", p.Name, "给配置起个容易识别的名字；每个配置使用独立的浏览器数据目录。");
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.Controls.Add(new Label { Text = "浏览器", AutoSize = true, Anchor = AnchorStyles.Right, Padding = new Padding(0, 7, 0, 0) }, 0, panel.RowCount);
         var browser = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList }; browser.Items.AddRange(["chrome", "edge", "fingerprint"]); browser.SelectedItem = p.Browser; if (browser.SelectedIndex < 0) browser.SelectedIndex = 0; panel.Controls.Add(browser, 1, panel.RowCount++);
-        var proxy = AddField("代理（空=直连）", p.Proxy); var lang = AddField("启动语言", p.Lang); var tz = AddField("启动时区", p.Timezone);
-        var path = AddField("浏览器 exe 路径", p.BrowserPath);
-        panel.Controls.Add(new Label { Text = "指纹开关", AutoSize = true, Anchor = AnchorStyles.Right }, 0, panel.RowCount);
-        var useFp = new CheckBox { Text = "使用 fingerprint 参数", Checked = p.UseFingerprint == true, AutoSize = true }; panel.Controls.Add(useFp, 1, panel.RowCount++);
-        var seed = AddField("指纹种子", p.FingerprintSeed); var platform = AddField("指纹操作系统", p.FingerprintPlatform); var disabled = AddField("关闭伪装", p.DisableSpoofing);
-        var urls = AddField("网址（每行一个）", string.Join(Environment.NewLine, p.Urls), true, 100);
+        AddHint("选择 Chrome、Edge，或带 fingerprint 补丁的 Chromium。");
+        var proxy = AddField("代理（空=直连）", p.Proxy, "留空表示直连，例如 socks5://127.0.0.1:10808。");
+        var lang = AddField("启动语言", p.Lang, "留空跟随系统；例如 en-US、zh-CN。设置后同时传给浏览器语言和 Accept-Language。");
+        var tz = AddField("启动时区", p.Timezone, "留空跟随系统；填写 IANA 时区名，例如 America/New_York、Asia/Shanghai。原版 Chrome/Edge 在 Windows 上仍使用系统时区；fingerprint 支持自定义时区。");
+        var path = AddField("浏览器 exe 路径", p.BrowserPath, "留空时自动查找；也可填写浏览器可执行文件的完整路径。此项对所有浏览器类型生效。");
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var fpLabel = new Label { Text = "指纹开关", AutoSize = true, Anchor = AnchorStyles.Right, Padding = new Padding(0, 7, 0, 0) };
+        var useFp = new CheckBox { Text = "使用 fingerprint 参数", Checked = p.UseFingerprint == true, AutoSize = true };
+        panel.Controls.Add(fpLabel, 0, panel.RowCount); panel.Controls.Add(useFp, 1, panel.RowCount++);
+        fingerprintToggleControls.Add(fpLabel); fingerprintToggleControls.Add(useFp);
+        AddHint("仅 fingerprint 浏览器使用；关闭时不传指纹参数，只应用语言、时区和代理。", fingerprintToggle: true);
+        var seed = AddField("指纹种子", p.FingerprintSeed, "32 位整数；留空时按配置名自动生成固定种子。", fingerprintOption: true);
+        var platform = AddField("指纹操作系统", p.FingerprintPlatform, "可填 windows、linux 或 macos；留空由浏览器按种子决定。", fingerprintOption: true);
+        var disabled = AddField("关闭伪装", p.DisableSpoofing, "用逗号分隔：font,audio,canvas,clientrects,gpu；留空表示全部开启。", fingerprintOption: true);
+        var urls = AddField("网址（每行一个）", string.Join(Environment.NewLine, p.Urls), "第一个网址打开新窗口，后续网址在同一配置中打开为标签页。", true, 100);
+        void RefreshFingerprintFields()
+        {
+            var isFingerprint = browser.Text == "fingerprint";
+            foreach (var control in fingerprintToggleControls) control.Visible = isFingerprint;
+            foreach (var control in fingerprintOptionControls) control.Visible = isFingerprint && useFp.Checked;
+        }
+        browser.SelectedIndexChanged += (_, _) => RefreshFingerprintFields();
+        useFp.CheckedChanged += (_, _) => RefreshFingerprintFields();
+        RefreshFingerprintFields();
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 44, Padding = new Padding(8) };
-        var ok = new Button { Text = "保存", DialogResult = DialogResult.OK, Width = 90 }; var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Width = 90 };
+        var ok = new Button { Text = "保存", Width = 90 }; var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Width = 90 };
+        ok.Click += (_, _) => { if (string.IsNullOrWhiteSpace(name.Text)) { MessageBox.Show(d, "名字不能为空。"); return; } d.DialogResult = DialogResult.OK; d.Close(); };
         buttons.Controls.Add(ok); buttons.Controls.Add(cancel); d.Controls.Add(buttons); d.AcceptButton = ok; d.CancelButton = cancel;
         if (d.ShowDialog(this) != DialogResult.OK) return false;
-        if (string.IsNullOrWhiteSpace(name.Text)) { MessageBox.Show(this, "名字不能为空。"); return false; }
         p.Name = name.Text.Trim(); p.Browser = browser.Text; p.Proxy = proxy.Text.Trim(); p.Lang = lang.Text.Trim(); p.Timezone = tz.Text.Trim(); p.BrowserPath = path.Text.Trim();
         p.UseFingerprint = useFp.Checked; p.FingerprintSeed = seed.Text.Trim(); p.FingerprintPlatform = platform.Text.Trim(); p.DisableSpoofing = disabled.Text.Trim();
         p.Urls = urls.Lines.Select(x => x.Trim()).Where(x => x.Length > 0).ToList(); return true;
