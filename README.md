@@ -16,15 +16,15 @@ Windows / macOS / Linux 用的 Chrome / Edge / fingerprint-chromium 多配置代
 
 ### C# 版下载与运行
 
-在 [Releases](https://github.com/panyong29/Browser-launcher/releases) 下载最新的 `BrowserLauncher.CSharp.exe`。该轻量版不包含 .NET 运行时，运行电脑需安装 .NET 8 Desktop Runtime（x64）；首次运行时会在 exe 同目录生成 `profiles.json`。把它与其他版本共用时，建议先备份配置文件。该版本面向 Windows x64，启动的浏览器仍需预先安装。
+在 [Releases](https://github.com/panyong29/Browser-launcher/releases) 下载最新的 `BrowserLauncher.CSharp.exe`。该版本面向 Windows x64，基于 .NET Framework 4.8，使用 Windows 11 自带的 .NET Framework，无需单独安装 .NET 8；首次运行时会在 exe 同目录生成 `profiles.json`。把它与其他版本共用时，建议先备份配置文件。启动的浏览器仍需预先安装。
 
-源码构建需要 .NET 8 SDK：
+源码构建需要 .NET 8 SDK 和 .NET Framework 4.8 targeting pack：
 
 ```powershell
-dotnet publish .\BrowserLauncher.CSharp\BrowserLauncher.CSharp.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true
+dotnet build .\BrowserLauncher.CSharp\BrowserLauncher.CSharp.csproj -c Release
 ```
 
-推送 `csharp-v*` 格式的标签（例如 `csharp-v1.0.0`）会自动构建依赖 .NET 8 Desktop Runtime 的 Windows x64 单文件 exe 并创建 GitHub Release。
+推送 `csharp-v*` 格式的标签（例如 `csharp-v1.0.0`）会自动构建 Windows x64 exe 并创建 GitHub Release。
 
 ## 运行
 

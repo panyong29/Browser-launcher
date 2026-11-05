@@ -17,13 +17,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Publish framework-dependent single-file executable
-        run: >-
-          dotnet publish BrowserLauncher.CSharp/BrowserLauncher.CSharp.csproj
-          --configuration Release --runtime win-x64 --self-contained false
-          -p:PublishSingleFile=true
-          -p:DebugType=None -p:DebugSymbols=false
-          --output artifacts
+      - name: Build .NET Framework 4.8 executable
+        run: dotnet build BrowserLauncher.CSharp/BrowserLauncher.CSharp.csproj --configuration Release --output artifacts -p:DebugType=None -p:DebugSymbols=false
       - name: Create GitHub Release and attach executable
         uses: softprops/action-gh-release@v2
         with:

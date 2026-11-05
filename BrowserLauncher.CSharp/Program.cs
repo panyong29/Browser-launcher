@@ -1,9 +1,10 @@
 using System.Diagnostics;
+using System.Collections;
 using System.Globalization;
 using System.IO;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 namespace BrowserLauncher.CSharp;
@@ -13,36 +14,37 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
-        ApplicationConfiguration.Initialize();
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new MainForm());
     }
 }
 
 internal sealed class AppConfig
 {
-    [JsonPropertyName("baseDir")] public string BaseDir { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "browser-launcher");
-    [JsonPropertyName("profiles")] public List<BrowserProfile> Profiles { get; set; } = [];
+    public string BaseDir { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "browser-launcher");
+    public List<BrowserProfile> Profiles { get; set; } = new List<BrowserProfile>();
 }
 
 internal sealed class BrowserProfile
 {
-    [JsonPropertyName("name")] public string Name { get; set; } = "";
-    [JsonPropertyName("browser")] public string Browser { get; set; } = "chrome";
-    [JsonPropertyName("proxy")] public string Proxy { get; set; } = "";
-    [JsonPropertyName("urls")] public List<string> Urls { get; set; } = [];
-    [JsonPropertyName("browser_path")] public string BrowserPath { get; set; } = "";
-    [JsonPropertyName("use_fingerprint")] public bool? UseFingerprint { get; set; }
-    [JsonPropertyName("fingerprint_seed")] public string FingerprintSeed { get; set; } = "";
-    [JsonPropertyName("fingerprint_platform")] public string FingerprintPlatform { get; set; } = "";
-    [JsonPropertyName("disable_spoofing")] public string DisableSpoofing { get; set; } = "";
-    [JsonPropertyName("lang")] public string Lang { get; set; } = "";
-    [JsonPropertyName("timezone")] public string Timezone { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Browser { get; set; } = "chrome";
+    public string Proxy { get; set; } = "";
+    public List<string> Urls { get; set; } = new List<string>();
+    public string BrowserPath { get; set; } = "";
+    public bool? UseFingerprint { get; set; }
+    public string FingerprintSeed { get; set; } = "";
+    public string FingerprintPlatform { get; set; } = "";
+    public string DisableSpoofing { get; set; } = "";
+    public string Lang { get; set; } = "";
+    public string Timezone { get; set; } = "";
 }
 
 internal sealed class MainForm : Form
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, PropertyNameCaseInsensitive = true };
-    private readonly string configPath = Path.Combine(AppContext.BaseDirectory, "profiles.json");
+    private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+    private readonly string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "profiles.json");
     private AppConfig config = new();
     private readonly DataGridView grid = new();
     private readonly TextBox baseDir = new();
@@ -88,15 +90,15 @@ internal sealed class MainForm : Form
     {
         try
         {
-            if (File.Exists(configPath)) config = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(configPath), JsonOptions) ?? new AppConfig();
+            if (File.Exists(configPath)) config = ParseConfig(File.ReadAllText(configPath));
             else config.Profiles = Defaults();
             config.BaseDir ??= Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "browser-launcher");
-            config.Profiles ??= [];
+            config.Profiles = config.Profiles ?? new List<BrowserProfile>();
             foreach (var p in config.Profiles)
             {
-                p.Name ??= ""; p.Browser ??= "chrome"; p.Proxy ??= ""; p.Urls ??= []; p.BrowserPath ??= "";
-                p.UseFingerprint ??= p.Browser == "fingerprint";
-                p.FingerprintSeed ??= ""; p.FingerprintPlatform ??= ""; p.DisableSpoofing ??= ""; p.Lang ??= ""; p.Timezone ??= "";
+                p.Name = p.Name ?? ""; p.Browser = p.Browser ?? "chrome"; p.Proxy = p.Proxy ?? ""; p.Urls = p.Urls ?? new List<string>(); p.BrowserPath = p.BrowserPath ?? "";
+                p.UseFingerprint = p.UseFingerprint ?? (p.Browser == "fingerprint");
+                p.FingerprintSeed = p.FingerprintSeed ?? ""; p.FingerprintPlatform = p.FingerprintPlatform ?? ""; p.DisableSpoofing = p.DisableSpoofing ?? ""; p.Lang = p.Lang ?? ""; p.Timezone = p.Timezone ?? "";
             }
             if (config.Profiles.Count == 0) config.Profiles = Defaults();
         }
@@ -105,16 +107,16 @@ internal sealed class MainForm : Form
         if (!File.Exists(configPath)) SaveConfig();
     }
 
-    private static List<BrowserProfile> Defaults() =>
-    [
-        new() { Name="VPS美国", Browser="chrome", Proxy="socks5://你的服务器IP:1080", Urls=["https://ippure.com/", "https://www.google.com", "https://www.youtube.com"] },
-        new() { Name="本地10808", Browser="chrome", Proxy="socks5://127.0.0.1:10808", Urls=["https://ippure.com/", "https://x.com"] },
-        new() { Name="Edge直连", Browser="edge", Urls=["https://ippure.com/", "https://www.bing.com"] }
-    ];
+    private static List<BrowserProfile> Defaults() => new List<BrowserProfile>
+    {
+        new BrowserProfile { Name="VPS美国", Browser="chrome", Proxy="socks5://你的服务器IP:1080", Urls=new List<string> { "https://ippure.com/", "https://www.google.com", "https://www.youtube.com" } },
+        new BrowserProfile { Name="本地10808", Browser="chrome", Proxy="socks5://127.0.0.1:10808", Urls=new List<string> { "https://ippure.com/", "https://x.com" } },
+        new BrowserProfile { Name="Edge直连", Browser="edge", Urls=new List<string> { "https://ippure.com/", "https://www.bing.com" } }
+    };
 
     private void SaveConfig()
     {
-        try { File.WriteAllText(configPath, JsonSerializer.Serialize(config, JsonOptions)); }
+        try { File.WriteAllText(configPath, Json.Serialize(ToJsonConfig(config))); }
         catch (Exception ex) { MessageBox.Show(this, $"保存配置失败：{ex.Message}", "错误"); }
     }
 
@@ -171,10 +173,10 @@ internal sealed class MainForm : Form
         if (d.ShowDialog(this) != DialogResult.OK) return;
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(d.FileName)); var root = doc.RootElement;
-            var imported = root.ValueKind == JsonValueKind.Array ? JsonSerializer.Deserialize<List<BrowserProfile>>(root.GetRawText(), JsonOptions) : JsonSerializer.Deserialize<AppConfig>(root.GetRawText(), JsonOptions)?.Profiles;
+            var importedConfig = ParseConfig(File.ReadAllText(d.FileName));
+            var imported = importedConfig.Profiles;
             if (imported is null || imported.Count == 0) throw new InvalidDataException("配置中没有 profiles。");
-            config.Profiles = imported; if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("baseDir", out var dir)) config.BaseDir = dir.GetString() ?? config.BaseDir;
+            config.Profiles = imported; config.BaseDir = importedConfig.BaseDir ?? config.BaseDir;
             baseDir.Text = config.BaseDir; SaveConfig(); RefreshGrid(); WriteLog($"已导入 {imported.Count} 个配置。");
         }
         catch (Exception ex) { MessageBox.Show(this, $"导入失败：{ex.Message}", "错误"); }
@@ -182,8 +184,8 @@ internal sealed class MainForm : Form
 
     private void ExportConfig()
     {
-        using var d = new SaveFileDialog { Filter = "JSON 文件 (*.json)|*.json", FileName = "profiles.json", InitialDirectory = AppContext.BaseDirectory };
-        if (d.ShowDialog(this) == DialogResult.OK) { File.WriteAllText(d.FileName, JsonSerializer.Serialize(config, JsonOptions)); WriteLog($"已导出到 {d.FileName}"); }
+        using var d = new SaveFileDialog { Filter = "JSON 文件 (*.json)|*.json", FileName = "profiles.json", InitialDirectory = AppDomain.CurrentDomain.BaseDirectory };
+        if (d.ShowDialog(this) == DialogResult.OK) { File.WriteAllText(d.FileName, Json.Serialize(ToJsonConfig(config))); WriteLog($"已导出到 {d.FileName}"); }
     }
 
     private void BrowseBaseDir() { using var d = new FolderBrowserDialog { SelectedPath = baseDir.Text }; if (d.ShowDialog(this) == DialogResult.OK) { baseDir.Text = d.SelectedPath; config.BaseDir = d.SelectedPath; SaveConfig(); } }
@@ -200,19 +202,19 @@ internal sealed class MainForm : Form
             var seed = GetSeed(p);
             for (var i = 0; i < p.Urls.Count; i++)
             {
-                var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory };
-                psi.ArgumentList.Add("--user-data-dir=" + dataDir); psi.ArgumentList.Add("--no-first-run");
+                var args = new List<string> { "--user-data-dir=" + dataDir, "--no-first-run" };
                 if (useFp)
                 {
-                    psi.ArgumentList.Add("--fingerprint=" + seed);
-                    if (!string.IsNullOrWhiteSpace(p.DisableSpoofing)) psi.ArgumentList.Add("--disable-spoofing=" + p.DisableSpoofing);
-                    if (!string.IsNullOrWhiteSpace(p.FingerprintPlatform)) psi.ArgumentList.Add("--fingerprint-platform=" + p.FingerprintPlatform);
+                    args.Add("--fingerprint=" + seed);
+                    if (!string.IsNullOrWhiteSpace(p.DisableSpoofing)) args.Add("--disable-spoofing=" + p.DisableSpoofing);
+                    if (!string.IsNullOrWhiteSpace(p.FingerprintPlatform)) args.Add("--fingerprint-platform=" + p.FingerprintPlatform);
                 }
-                if (!string.IsNullOrWhiteSpace(p.Lang)) { psi.ArgumentList.Add("--lang=" + p.Lang); psi.ArgumentList.Add("--accept-lang=" + p.Lang); }
-                if (!string.IsNullOrWhiteSpace(p.Timezone) && p.Browser == "fingerprint") psi.ArgumentList.Add("--timezone=" + p.Timezone);
-                if (!string.IsNullOrWhiteSpace(p.Proxy)) psi.ArgumentList.Add("--proxy-server=" + p.Proxy);
-                if (i == 0) psi.ArgumentList.Add("--new-window");
-                if (p.Urls.Count > 0) psi.ArgumentList.Add(p.Urls[i]);
+                if (!string.IsNullOrWhiteSpace(p.Lang)) { args.Add("--lang=" + p.Lang); args.Add("--accept-lang=" + p.Lang); }
+                if (!string.IsNullOrWhiteSpace(p.Timezone) && p.Browser == "fingerprint") args.Add("--timezone=" + p.Timezone);
+                if (!string.IsNullOrWhiteSpace(p.Proxy)) args.Add("--proxy-server=" + p.Proxy);
+                if (i == 0) args.Add("--new-window");
+                if (p.Urls.Count > 0) args.Add(p.Urls[i]);
+                var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory, Arguments = string.Join(" ", args.Select(QuoteArgument)) };
                 Process.Start(psi); Thread.Sleep(i == 0 ? 1500 : 800);
             }
             WriteLog($"启动 [{p.Name}] {p.Browser}，代理：{(string.IsNullOrWhiteSpace(p.Proxy) ? "直连" : p.Proxy)}" + (useFp ? $"，指纹种子：{seed}" : ""));
@@ -240,8 +242,65 @@ internal sealed class MainForm : Form
             "edge" => new[] { Path.Combine(pf86, "Microsoft/Edge/Application/msedge.exe"), Path.Combine(pf, "Microsoft/Edge/Application/msedge.exe") },
             _ => new[] { Path.Combine(local, "Chromium/Application/chrome.exe"), Path.Combine(pf, "Chromium/Application/chrome.exe"), Path.Combine(pf86, "Chromium/Application/chrome.exe") }
         };
-        return candidates.FirstOrDefault(File.Exists);
+        return candidates.FirstOrDefault(path => File.Exists(path));
     }
+
+    private static string QuoteArgument(string value)
+    {
+        if (value.Length > 0 && value.IndexOfAny(new[] { ' ', '\t', '\n', '\v', '"' }) < 0) return value;
+        var result = new StringBuilder("\""); var slashes = 0;
+        foreach (var ch in value)
+        {
+            if (ch == '\\') { slashes++; continue; }
+            if (ch == '"') result.Append('\\', slashes * 2 + 1);
+            else result.Append('\\', slashes);
+            result.Append(ch); slashes = 0;
+        }
+        result.Append('\\', slashes * 2); result.Append('"'); return result.ToString();
+    }
+
+    private static object ToJsonConfig(AppConfig value) => new Dictionary<string, object>
+    {
+        { "baseDir", value.BaseDir },
+        { "profiles", value.Profiles.Select(p => (object)new Dictionary<string, object>
+            {
+                { "name", p.Name }, { "browser", p.Browser }, { "proxy", p.Proxy }, { "urls", p.Urls },
+                { "browser_path", p.BrowserPath }, { "use_fingerprint", p.UseFingerprint ?? false },
+                { "fingerprint_seed", p.FingerprintSeed }, { "fingerprint_platform", p.FingerprintPlatform },
+                { "disable_spoofing", p.DisableSpoofing }, { "lang", p.Lang }, { "timezone", p.Timezone }
+            }).ToArray() }
+    };
+
+    private static AppConfig ParseConfig(string json)
+    {
+        var root = Json.DeserializeObject(json);
+        var result = new AppConfig();
+        if (root is Dictionary<string, object> data)
+        {
+            if (data.TryGetValue("baseDir", out var baseValue) && baseValue is string dir && !string.IsNullOrWhiteSpace(dir)) result.BaseDir = dir;
+            if (data.TryGetValue("profiles", out var profilesValue) && profilesValue is IEnumerable entries)
+                foreach (var item in entries) if (item is Dictionary<string, object> profile) result.Profiles.Add(ParseProfile(profile));
+        }
+        else if (root is IEnumerable list && !(root is string))
+            foreach (var item in list) if (item is Dictionary<string, object> profile) result.Profiles.Add(ParseProfile(profile));
+        return result;
+    }
+
+    private static BrowserProfile ParseProfile(Dictionary<string, object> item)
+    {
+        object value; var profile = new BrowserProfile();
+        profile.Name = ReadString(item, "name", ""); profile.Browser = ReadString(item, "browser", "chrome");
+        profile.Proxy = ReadString(item, "proxy", ""); profile.BrowserPath = ReadString(item, "browser_path", "");
+        profile.FingerprintSeed = ReadString(item, "fingerprint_seed", ""); profile.FingerprintPlatform = ReadString(item, "fingerprint_platform", "");
+        profile.DisableSpoofing = ReadString(item, "disable_spoofing", ""); profile.Lang = ReadString(item, "lang", ""); profile.Timezone = ReadString(item, "timezone", "");
+        profile.UseFingerprint = item.TryGetValue("use_fingerprint", out value) ? Convert.ToBoolean(value, CultureInfo.InvariantCulture) : profile.Browser == "fingerprint";
+        if (item.TryGetValue("urls", out value) && value is IEnumerable urls)
+            foreach (var url in urls) if (url != null && !string.IsNullOrWhiteSpace(Convert.ToString(url, CultureInfo.InvariantCulture))) profile.Urls.Add(Convert.ToString(url, CultureInfo.InvariantCulture));
+        return profile;
+    }
+
+    private static string ReadString(Dictionary<string, object> item, string key, string fallback) =>
+        item.TryGetValue(key, out var value) && value != null ? Convert.ToString(value, CultureInfo.InvariantCulture) ?? fallback : fallback;
 
     private void WriteLog(string message) { log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}"); }
     private static string EmptyFallback(string value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value;
