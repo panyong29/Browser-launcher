@@ -157,7 +157,7 @@ internal sealed class MainForm : Form
         {
             panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var labelControl = new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Right, Padding = new Padding(0, 7, 0, 0) };
-            var box = new TextBox { Text = value, Dock = DockStyle.Fill, Multiline = multiline, Height = height, ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None };
+            var box = new TextBox { Text = value, Dock = DockStyle.Fill, Multiline = multiline, AcceptsReturn = multiline, Height = height, ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None };
             panel.Controls.Add(labelControl, 0, panel.RowCount); panel.Controls.Add(box, 1, panel.RowCount++);
             if (fingerprintOption) { fingerprintOptionControls.Add(labelControl); fingerprintOptionControls.Add(box); }
             if (!string.IsNullOrWhiteSpace(hint)) AddHint(hint, fingerprintOption: fingerprintOption);
