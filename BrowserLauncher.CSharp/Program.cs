@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -34,6 +35,7 @@ internal sealed class BrowserProfile
     public List<string> Urls { get; set; } = new List<string>();
     public string BrowserPath { get; set; } = "";
     public bool? UseFingerprint { get; set; }
+    public bool AutoStart { get; set; }
     public string FingerprintSeed { get; set; } = "";
     public string FingerprintPlatform { get; set; } = "";
     public string DisableSpoofing { get; set; } = "";
@@ -49,12 +51,18 @@ internal sealed class MainForm : Form
     private readonly DataGridView grid = new();
     private readonly TextBox baseDir = new();
     private readonly TextBox log = new();
+    private CheckBox autoStartLauncher = new();
+    private bool changingAutostartToggle;
 
     public MainForm()
     {
         Text = "浏览器多配置代理启动器（C#）";
         Width = 980; Height = 680; MinimumSize = new Size(840, 580); StartPosition = FormStartPosition.CenterScreen;
         BuildUi(); LoadConfig(); RefreshGrid();
+        Shown += (_, _) => BeginInvoke(new Action(() =>
+        {
+            foreach (var profile in config.Profiles.Where(p => p.AutoStart)) Launch(profile);
+        }));
     }
 
     private void BuildUi()
@@ -72,6 +80,9 @@ internal sealed class MainForm : Form
         AddButton(buttons, "启动选中", LaunchSelected); AddButton(buttons, "全部启动", () => { foreach (var p in config.Profiles.ToArray()) Launch(p); });
         AddButton(buttons, "新增", AddProfile); AddButton(buttons, "编辑", EditProfile); AddButton(buttons, "删除", DeleteProfile);
         AddButton(buttons, "导入配置", ImportConfig); AddButton(buttons, "导出配置", ExportConfig);
+        autoStartLauncher = new CheckBox { Text = "登录时启动启动器", AutoSize = true, Checked = IsLauncherAutostartEnabled(), Margin = new Padding(8, 8, 3, 3) };
+        autoStartLauncher.CheckedChanged += (_, _) => ToggleLauncherAutostart();
+        buttons.Controls.Add(autoStartLauncher);
         root.Controls.Add(buttons, 0, 2);
         var dirPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 4, 0, 8), WrapContents = false };
         dirPanel.Controls.Add(new Label { Text = "数据目录：", AutoSize = true, Padding = new Padding(0, 7, 0, 0) });
@@ -181,6 +192,11 @@ internal sealed class MainForm : Form
         var seed = AddField("指纹种子", p.FingerprintSeed, "32 位整数；留空时按配置名自动生成固定种子。", fingerprintOption: true);
         var platform = AddField("指纹操作系统", p.FingerprintPlatform, "可填 windows、linux 或 macos；留空由浏览器按种子决定。", fingerprintOption: true);
         var disabled = AddField("关闭伪装", p.DisableSpoofing, "用逗号分隔：font,audio,canvas,clientrects,gpu；留空表示全部开启。", fingerprintOption: true);
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.Controls.Add(new Label { Text = "启动选项", AutoSize = true, Anchor = AnchorStyles.Right, Padding = new Padding(0, 7, 0, 0) }, 0, panel.RowCount);
+        var autoStart = new CheckBox { Text = "跟随启动器启动此浏览器配置", Checked = p.AutoStart, AutoSize = true };
+        panel.Controls.Add(autoStart, 1, panel.RowCount++);
+        AddHint("启动器打开时自动启动此配置；未勾选的配置不会自动启动。");
         var urls = AddField("网址（每行一个）", string.Join(Environment.NewLine, p.Urls), "第一个网址打开新窗口，后续网址在同一配置中打开为标签页。", true, 100);
         void RefreshFingerprintFields()
         {
@@ -198,6 +214,7 @@ internal sealed class MainForm : Form
         if (d.ShowDialog(this) != DialogResult.OK) return false;
         p.Name = name.Text.Trim(); p.Browser = browser.Text; p.Proxy = proxy.Text.Trim(); p.Lang = lang.Text.Trim(); p.Timezone = tz.Text.Trim(); p.BrowserPath = path.Text.Trim();
         p.UseFingerprint = useFp.Checked; p.FingerprintSeed = seed.Text.Trim(); p.FingerprintPlatform = platform.Text.Trim(); p.DisableSpoofing = disabled.Text.Trim();
+        p.AutoStart = autoStart.Checked;
         p.Urls = urls.Lines.Select(x => x.Trim()).Where(x => x.Length > 0).ToList(); return true;
     }
 
@@ -300,6 +317,7 @@ internal sealed class MainForm : Form
             {
                 { "name", p.Name }, { "browser", p.Browser }, { "proxy", p.Proxy }, { "urls", p.Urls },
                 { "browser_path", p.BrowserPath }, { "use_fingerprint", p.UseFingerprint ?? false },
+                { "auto_start", p.AutoStart },
                 { "fingerprint_seed", p.FingerprintSeed }, { "fingerprint_platform", p.FingerprintPlatform },
                 { "disable_spoofing", p.DisableSpoofing }, { "lang", p.Lang }, { "timezone", p.Timezone }
             }).ToArray() }
@@ -328,6 +346,7 @@ internal sealed class MainForm : Form
         profile.FingerprintSeed = ReadString(item, "fingerprint_seed", ""); profile.FingerprintPlatform = ReadString(item, "fingerprint_platform", "");
         profile.DisableSpoofing = ReadString(item, "disable_spoofing", ""); profile.Lang = ReadString(item, "lang", ""); profile.Timezone = ReadString(item, "timezone", "");
         profile.UseFingerprint = item.TryGetValue("use_fingerprint", out value) ? Convert.ToBoolean(value, CultureInfo.InvariantCulture) : profile.Browser == "fingerprint";
+        profile.AutoStart = item.TryGetValue("auto_start", out value) && Convert.ToBoolean(value, CultureInfo.InvariantCulture);
         if (item.TryGetValue("urls", out value) && value is IEnumerable urls)
             foreach (var url in urls) if (url != null && !string.IsNullOrWhiteSpace(Convert.ToString(url, CultureInfo.InvariantCulture))) profile.Urls.Add(Convert.ToString(url, CultureInfo.InvariantCulture));
         return profile;
@@ -335,6 +354,41 @@ internal sealed class MainForm : Form
 
     private static string ReadString(Dictionary<string, object> item, string key, string fallback) =>
         item.TryGetValue(key, out var value) && value != null ? Convert.ToString(value, CultureInfo.InvariantCulture) ?? fallback : fallback;
+
+    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValueName = "BrowserLauncherCSharp";
+
+    private static string CurrentExecutablePath() => Process.GetCurrentProcess().MainModule?.FileName ?? Application.ExecutablePath;
+
+    private static bool IsLauncherAutostartEnabled()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, false);
+            var command = key?.GetValue(RunValueName) as string;
+            return command != null && command.IndexOf(CurrentExecutablePath(), StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+        catch { return false; }
+    }
+
+    private void ToggleLauncherAutostart()
+    {
+        if (changingAutostartToggle) return;
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
+            if (autoStartLauncher.Checked) key.SetValue(RunValueName, "\"" + CurrentExecutablePath() + "\"", RegistryValueKind.String);
+            else if (key.GetValue(RunValueName) != null) key.DeleteValue(RunValueName, false);
+            WriteLog(autoStartLauncher.Checked ? "已启用登录时启动启动器。" : "已关闭登录时启动启动器。");
+        }
+        catch (Exception ex)
+        {
+            changingAutostartToggle = true;
+            autoStartLauncher.Checked = IsLauncherAutostartEnabled();
+            changingAutostartToggle = false;
+            MessageBox.Show(this, "设置登录启动失败：" + ex.Message, "错误");
+        }
+    }
 
     private void WriteLog(string message) { log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}"); }
     private static string EmptyFallback(string value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value;

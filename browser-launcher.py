@@ -54,6 +54,7 @@ Linux 注意：如果提示找不到 tkinter，Ubuntu/Debian 装 python3-tk：
 import json
 import os
 import platform
+import plistlib
 import re
 import shutil
 import subprocess
@@ -77,13 +78,13 @@ else:
 
 DEFAULT_PROFILES = [
     {"name": "VPS美国", "browser": "chrome", "proxy": "socks5://你的服务器IP:1080",
-     "browser_path": "", "use_fingerprint": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "",
+     "browser_path": "", "use_fingerprint": False, "auto_start": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "",
      "urls": ["https://ippure.com/", "https://www.google.com", "https://www.youtube.com"]},
     {"name": "本地10808", "browser": "chrome", "proxy": "socks5://127.0.0.1:10808",
-     "browser_path": "", "use_fingerprint": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "",
+     "browser_path": "", "use_fingerprint": False, "auto_start": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "",
      "urls": ["https://ippure.com/", "https://x.com"]},
     {"name": "Edge直连", "browser": "edge", "proxy": "",
-     "browser_path": "", "use_fingerprint": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "",
+     "browser_path": "", "use_fingerprint": False, "auto_start": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "",
      "urls": ["https://ippure.com/", "https://www.bing.com"]},
 ]
 # ---------------- 默认配置结束 ----------------
@@ -171,8 +172,122 @@ def normalize_profile(raw):
         "proxy": str(raw.get("proxy", "")),
         "lang": str(raw.get("lang", "") or "").strip(),
         "timezone": str(raw.get("timezone", "") or "").strip(),
+        "auto_start": bool(raw.get("auto_start", False)),
         "urls": [str(u) for u in raw.get("urls", []) if str(u).strip()],
     }
+
+
+def _autostart_command():
+    """Return the command used to start this GUI app at user login."""
+    executable = sys.executable
+    if os.name == "nt" and os.path.basename(executable).lower() == "python.exe":
+        pythonw = os.path.join(os.path.dirname(executable), "pythonw.exe")
+        if os.path.isfile(pythonw):
+            executable = pythonw
+    return [executable, os.path.abspath(__file__)]
+
+
+def _autostart_paths():
+    if sys.platform == "darwin":
+        path = os.path.expanduser("~/Library/LaunchAgents/com.browserlauncher.app.plist")
+    elif os.name == "nt":
+        return None
+    else:
+        path = os.path.expanduser("~/.config/autostart/browser-launcher.desktop")
+    return path
+
+
+def is_launcher_autostart_enabled():
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
+                value, _ = winreg.QueryValueEx(key, "BrowserLauncherPython")
+            expected = '"%s" "%s"' % tuple(_autostart_command())
+            return value.lower() == expected.lower()
+        except (OSError, ImportError):
+            return False
+    path = _autostart_paths()
+    if not os.path.isfile(path):
+        return False
+    if sys.platform == "darwin":
+        try:
+            with open(path, "rb") as f:
+                data = plistlib.load(f)
+            return data.get("ProgramArguments") == _autostart_command()
+        except Exception:
+            return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return os.path.abspath(__file__) in f.read()
+    except OSError:
+        return False
+
+
+def set_launcher_autostart(enabled):
+    """Register/unregister this launcher for the current user's next login."""
+    command = _autostart_command()
+    if os.name == "nt":
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0,
+                                winreg.KEY_SET_VALUE) as key:
+            if enabled:
+                winreg.SetValueEx(key, "BrowserLauncherPython", 0, winreg.REG_SZ,
+                                  '"%s" "%s"' % tuple(command))
+            else:
+                try:
+                    winreg.DeleteValue(key, "BrowserLauncherPython")
+                except FileNotFoundError:
+                    pass
+        return
+
+    path = _autostart_paths()
+    if sys.platform == "darwin":
+        domain = "gui/%d" % os.getuid()
+        if enabled:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            data = {
+                "Label": "com.browserlauncher.app",
+                "ProgramArguments": command,
+                "WorkingDirectory": SCRIPT_DIR,
+                "RunAtLoad": True,
+            }
+            with open(path, "wb") as f:
+                plistlib.dump(data, f)
+            subprocess.run(["launchctl", "bootout", domain, path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result = subprocess.run(["launchctl", "bootstrap", domain, path],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            if result.returncode:
+                raise OSError(result.stderr.strip() or "launchctl bootstrap 失败")
+        else:
+            subprocess.run(["launchctl", "bootout", domain, path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+        return
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if enabled:
+        def desktop_quote(arg):
+            return '"%s"' % (arg.replace("\\", "\\\\").replace('"', '\\"')
+                             .replace("`", "\\`").replace("$", "\\$").replace("%", "%%"))
+        content = "\n".join([
+            "[Desktop Entry]", "Type=Application", "Name=Browser Launcher",
+            "Exec=" + " ".join(desktop_quote(arg) for arg in command),
+            "Terminal=false", "X-GNOME-Autostart-enabled=true", "",
+        ])
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    else:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
 
 
 def load_config():
@@ -358,14 +473,19 @@ def profile_dialog(parent, p):
     tk.Label(dlg, text="(每行一个网址，第一个开新窗口，后面的开成标签页)").grid(
         row=9, column=1, sticky="w", padx=10)
 
+    follow_start_var = tk.BooleanVar(value=bool(p.get("auto_start", False)))
+    tk.Label(dlg, text="启动选项：").grid(row=10, column=0, sticky="e", padx=10, pady=8)
+    tk.Checkbutton(dlg, text="跟随启动器启动此浏览器配置", variable=follow_start_var).grid(
+        row=10, column=1, sticky="w", padx=10, pady=8)
+
     # 指纹开关：只有浏览器选了 fingerprint 时才显示；开了才展开下面参数。
     use_fp_var = tk.BooleanVar(value=bool(p.get("use_fingerprint", False)))
     fp_switch_label = tk.Label(dlg, text="指纹开关：")
-    fp_switch_label.grid(row=10, column=0, sticky="e", padx=10, pady=8)
+    fp_switch_label.grid(row=12, column=0, sticky="e", padx=10, pady=8)
     fp_switch = tk.Checkbutton(dlg, text="使用指纹（fingerprint-chromium）", variable=use_fp_var)
-    fp_switch.grid(row=10, column=1, sticky="w", padx=10, pady=8)
+    fp_switch.grid(row=12, column=1, sticky="w", padx=10, pady=8)
     fp_switch_hint = tk.Label(dlg, text="(关 = 不传指纹，只用语言/时区；开 = 展开下面参数)")
-    fp_switch_hint.grid(row=11, column=1, sticky="w", padx=10)
+    fp_switch_hint.grid(row=13, column=1, sticky="w", padx=10)
 
     fp_detail_widgets = []
     def _fp_row(label_text, entry, hint_text, row):
@@ -381,25 +501,25 @@ def profile_dialog(parent, p):
     # 不跟指纹开关一起收起（开关关了只用语言/时区时，仍要靠它找 fingerprint exe）。
     browser_path_entry = tk.Entry(dlg, width=48)
     browser_path_entry.insert(0, p.get("browser_path", ""))
-    tk.Label(dlg, text="浏览器 exe 路径：").grid(row=12, column=0, sticky="e", padx=10, pady=8)
-    browser_path_entry.grid(row=12, column=1, padx=10, pady=8)
+    tk.Label(dlg, text="浏览器 exe 路径：").grid(row=14, column=0, sticky="e", padx=10, pady=8)
+    browser_path_entry.grid(row=14, column=1, padx=10, pady=8)
     tk.Label(dlg, text="(留空自动找；fingerprint-chromium 安装位置不固定，填它自己的 exe 最稳；例如 C:\\Chromium\\Application\\chrome.exe)").grid(
-        row=13, column=1, sticky="w", padx=10)
+        row=15, column=1, sticky="w", padx=10)
 
     fingerprint_seed_entry = tk.Entry(dlg, width=48)
     fingerprint_seed_entry.insert(0, p.get("fingerprint_seed", ""))
     _fp_row("指纹种子：", fingerprint_seed_entry,
-            "(仅 fingerprint 用，32 位整数；留空按配置名自动生成固定种子)", 14)
+            "(仅 fingerprint 用，32 位整数；留空按配置名自动生成固定种子)", 16)
 
     disable_spoofing_entry = tk.Entry(dlg, width=48)
     disable_spoofing_entry.insert(0, p.get("disable_spoofing", ""))
     _fp_row("关闭伪装：", disable_spoofing_entry,
-            "(仅 fingerprint 用，逗号分隔，如 font,audio,canvas,clientrects,gpu；留空 = 全开)", 16)
+            "(仅 fingerprint 用，逗号分隔，如 font,audio,canvas,clientrects,gpu；留空 = 全开)", 18)
 
     fingerprint_platform_entry = tk.Entry(dlg, width=48)
     fingerprint_platform_entry.insert(0, p.get("fingerprint_platform", ""))
     _fp_row("操作系统：", fingerprint_platform_entry,
-            "(仅 fingerprint 用，如 windows、linux、macos；留空 = 种子随机生成)", 18)
+            "(仅 fingerprint 用，如 windows、linux、macos；留空 = 种子随机生成)", 20)
 
     def refresh_fp():
         is_fp = browser_box.get() == "fingerprint"
@@ -435,13 +555,14 @@ def profile_dialog(parent, p):
         p["proxy"] = proxy_entry.get().strip()
         p["lang"] = lang_entry.get().strip()
         p["timezone"] = timezone_entry.get().strip()
+        p["auto_start"] = bool(follow_start_var.get())
         p["urls"] = [line.strip() for line in urls_text.get("1.0", "end").splitlines()
                      if line.strip()]
         result["ok"] = True
         dlg.destroy()
 
     btn_frame = tk.Frame(dlg)
-    btn_frame.grid(row=20, column=1, sticky="e", padx=10, pady=12)
+    btn_frame.grid(row=22, column=1, sticky="e", padx=10, pady=12)
     tk.Button(btn_frame, text="保存", width=10, command=on_save).pack(side="left", padx=4)
     tk.Button(btn_frame, text="取消", width=10, command=dlg.destroy).pack(side="left", padx=4)
 
@@ -497,7 +618,7 @@ def main():
             launch_profile(p)
 
     def on_add():
-        new_profile = {"name": "", "browser": "chrome", "proxy": "", "browser_path": "", "use_fingerprint": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "", "urls": []}
+        new_profile = {"name": "", "browser": "chrome", "proxy": "", "browser_path": "", "use_fingerprint": False, "fingerprint_seed": "", "fingerprint_platform": "", "disable_spoofing": "", "lang": "", "timezone": "", "auto_start": False, "urls": []}
         if profile_dialog(root, new_profile):
             profiles.append(new_profile)
             save_config()
@@ -529,6 +650,21 @@ def main():
     for text, cmd in (("启动选中", on_launch_selected), ("全部启动", on_launch_all),
                       ("新增", on_add), ("编辑", on_edit), ("删除", on_delete)):
         tk.Button(btn_row, text=text, width=12, command=cmd).pack(side="left", padx=3)
+
+    autostart_row = tk.Frame(root)
+    autostart_row.pack(fill="x", padx=15, pady=3)
+    autostart_var = tk.BooleanVar(value=is_launcher_autostart_enabled())
+
+    def on_toggle_autostart():
+        try:
+            set_launcher_autostart(autostart_var.get())
+            write_log("已启用登录时启动启动器" if autostart_var.get() else "已关闭登录时启动启动器")
+        except Exception as e:
+            autostart_var.set(is_launcher_autostart_enabled())
+            messagebox.showerror("设置失败", str(e), parent=root)
+
+    tk.Checkbutton(autostart_row, text="登录时启动启动器（勾选的浏览器配置也会随启动器启动）",
+                   variable=autostart_var, command=on_toggle_autostart).pack(side="left")
 
     dir_row = tk.Frame(root)
     dir_row.pack(fill="x", padx=15, pady=4)
@@ -618,6 +754,14 @@ def main():
         write_log("没有找到 profiles.json，已按默认配置生成一个")
     write_log("当前系统：%s，配置文件与 Windows 版通用" % platform.system())
 
+    def start_marked_profiles():
+        marked = [p for p in profiles if p.get("auto_start", False)]
+        if marked:
+            write_log("启动已勾选的浏览器配置：%d 个" % len(marked))
+            for p in marked:
+                launch_profile(p)
+
+    root.after(300, start_marked_profiles)
     root.mainloop()
 
 

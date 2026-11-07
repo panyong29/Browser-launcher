@@ -8,9 +8,9 @@
 # ---------------- 默认配置（只在没有 profiles.json 时用一次） ----------------
 $script:BaseDir = "D:\browser-launcher"
 $script:Profiles = @(
-    [PSCustomObject]@{ name = "VPS美国";   browser = "chrome"; proxy = "socks5://你的服务器IP:1080"; browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://www.google.com", "https://www.youtube.com") },
-    [PSCustomObject]@{ name = "本地10808"; browser = "chrome"; proxy = "socks5://127.0.0.1:10808";      browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://x.com") },
-    [PSCustomObject]@{ name = "Edge直连";   browser = "edge";   proxy = "";                              browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://www.bing.com") }
+    [PSCustomObject]@{ name = "VPS美国";   browser = "chrome"; proxy = "socks5://你的服务器IP:1080"; browser_path = ""; use_fingerprint = $false; auto_start = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://www.google.com", "https://www.youtube.com") },
+    [PSCustomObject]@{ name = "本地10808"; browser = "chrome"; proxy = "socks5://127.0.0.1:10808";      browser_path = ""; use_fingerprint = $false; auto_start = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://x.com") },
+    [PSCustomObject]@{ name = "Edge直连";   browser = "edge";   proxy = "";                              browser_path = ""; use_fingerprint = $false; auto_start = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @("https://ippure.com/", "https://www.bing.com") }
 )
 # ---------------- 默认配置结束 ----------------
 
@@ -69,6 +69,33 @@ function Get-UseFingerprint($p) {
     # 旧配置没有 use_fingerprint 字段时：浏览器是 fingerprint 默认开，其他默认关（与 py 版一致）。
     if ($p.PSObject.Properties.Name -contains "use_fingerprint") { return [bool]$p.use_fingerprint }
     return ($p.browser -eq "fingerprint")
+}
+
+function Get-AutoStart($p) {
+    return ($p.PSObject.Properties.Name -contains "auto_start") -and [bool]$p.auto_start
+}
+
+$script:RunKeyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$script:RunValueName = "BrowserLauncherPowerShell"
+
+function Get-LauncherAutostartEnabled {
+    if (-not $PSCommandPath) { return $false }
+    try {
+        $properties = Get-ItemProperty -Path $script:RunKeyPath -Name $script:RunValueName -ErrorAction Stop
+        $command = $properties.PSObject.Properties[$script:RunValueName].Value
+        return $command -like "*$PSCommandPath*"
+    } catch { return $false }
+}
+
+function Set-LauncherAutostart($enabled) {
+    if (-not $PSCommandPath) { throw "请从 .ps1 文件运行，才能设置登录启动。" }
+    if ($enabled) {
+        New-Item -Path $script:RunKeyPath -Force | Out-Null
+        $command = 'powershell.exe -WindowStyle Hidden -STA -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+        Set-ItemProperty -Path $script:RunKeyPath -Name $script:RunValueName -Value $command
+    } else {
+        Remove-ItemProperty -Path $script:RunKeyPath -Name $script:RunValueName -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-FingerprintSeed($p) {
@@ -177,7 +204,7 @@ function Start-Profile($p) {
 function Show-ProfileDialog($p) {
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text = if ($p.name) { "编辑配置" } else { "新增配置" }
-    $dlg.Size = New-Object System.Drawing.Size(480, 760)
+    $dlg.Size = New-Object System.Drawing.Size(480, 810)
     $dlg.StartPosition = "CenterScreen"
     $dlg.FormBorderStyle = "FixedDialog"
     $dlg.MaximizeBox = $false
@@ -236,28 +263,37 @@ function Show-ProfileDialog($p) {
     $dlg.Controls.Add($txtUrls)
     Add-Hint "(每行一个网址，第一个开新窗口，后面的开成标签页)" 432 | Out-Null
 
+    $lblAutoStart = New-Object System.Windows.Forms.Label
+    $lblAutoStart.Text = "启动选项："; $lblAutoStart.Location = New-Object System.Drawing.Point(20, 463); $lblAutoStart.AutoSize = $true
+    $dlg.Controls.Add($lblAutoStart)
+    $chkAutoStart = New-Object System.Windows.Forms.CheckBox
+    $chkAutoStart.Text = "跟随启动器启动此浏览器配置"
+    $chkAutoStart.Location = New-Object System.Drawing.Point(110, 460); $chkAutoStart.AutoSize = $true
+    $chkAutoStart.Checked = Get-AutoStart $p
+    $dlg.Controls.Add($chkAutoStart)
+
     # 指纹开关：只有浏览器选了 fingerprint 时才显示；开了才展开下面参数。
     $lblFpSwitch = New-Object System.Windows.Forms.Label
-    $lblFpSwitch.Text = "指纹开关："; $lblFpSwitch.Location = New-Object System.Drawing.Point(20, 460); $lblFpSwitch.AutoSize = $true
+    $lblFpSwitch.Text = "指纹开关："; $lblFpSwitch.Location = New-Object System.Drawing.Point(20, 500); $lblFpSwitch.AutoSize = $true
     $dlg.Controls.Add($lblFpSwitch)
     $chkUseFp = New-Object System.Windows.Forms.CheckBox
     $chkUseFp.Text = "使用指纹（fingerprint-chromium）"
-    $chkUseFp.Location = New-Object System.Drawing.Point(110, 458); $chkUseFp.AutoSize = $true
+    $chkUseFp.Location = New-Object System.Drawing.Point(110, 498); $chkUseFp.AutoSize = $true
     $chkUseFp.Checked = (Get-UseFingerprint $p)
     $dlg.Controls.Add($chkUseFp)
-    $lblFpHint = Add-Hint "(关 = 不传指纹，只用语言/时区；开 = 展开下面参数)" 488
+    $lblFpHint = Add-Hint "(关 = 不传指纹，只用语言/时区；开 = 展开下面参数)" 528
 
     $txtSeed = New-Object System.Windows.Forms.TextBox; $txtSeed.Text = $p.fingerprint_seed
-    $lblSeed = Add-Field "指纹种子：" 515 $txtSeed
-    $lblSeedHint = Add-Hint "(32 位整数；留空按配置名自动生成固定种子)" 543
+    $lblSeed = Add-Field "指纹种子：" 555 $txtSeed
+    $lblSeedHint = Add-Hint "(32 位整数；留空按配置名自动生成固定种子)" 583
 
     $txtDisable = New-Object System.Windows.Forms.TextBox; $txtDisable.Text = $p.disable_spoofing
-    $lblDisable = Add-Field "关闭伪装：" 570 $txtDisable
-    $lblDisableHint = Add-Hint "(逗号分隔，如 font,audio,canvas,clientrects,gpu；留空 = 全开)" 598
+    $lblDisable = Add-Field "关闭伪装：" 610 $txtDisable
+    $lblDisableHint = Add-Hint "(逗号分隔，如 font,audio,canvas,clientrects,gpu；留空 = 全开)" 638
 
     $txtPlatform = New-Object System.Windows.Forms.TextBox; $txtPlatform.Text = $p.fingerprint_platform
-    $lblPlatform = Add-Field "操作系统：" 625 $txtPlatform
-    $lblPlatformHint = Add-Hint "(如 windows、linux、macos；留空 = 种子随机生成)" 653
+    $lblPlatform = Add-Field "操作系统：" 665 $txtPlatform
+    $lblPlatformHint = Add-Hint "(如 windows、linux、macos；留空 = 种子随机生成)" 693
 
     $fpDetail = @($lblSeed, $txtSeed, $lblSeedHint, $lblDisable, $txtDisable, $lblDisableHint, $lblPlatform, $txtPlatform, $lblPlatformHint)
     $refreshFp = {
@@ -272,12 +308,12 @@ function Show-ProfileDialog($p) {
 
     $btnOK = New-Object System.Windows.Forms.Button
     $btnOK.Text = "保存"; $btnOK.Size = New-Object System.Drawing.Size(80, 32)
-    $btnOK.Location = New-Object System.Drawing.Point(270, 685)
+    $btnOK.Location = New-Object System.Drawing.Point(270, 745)
     $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $dlg.Controls.Add($btnOK)
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = "取消"; $btnCancel.Size = New-Object System.Drawing.Size(80, 32)
-    $btnCancel.Location = New-Object System.Drawing.Point(360, 685)
+    $btnCancel.Location = New-Object System.Drawing.Point(360, 745)
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $dlg.Controls.Add($btnCancel)
     $dlg.AcceptButton = $btnOK
@@ -293,6 +329,7 @@ function Show-ProfileDialog($p) {
     $p.proxy = $txtProxy.Text.Trim()
     $p.lang = $txtLang.Text.Trim()
     $p.timezone = $txtTimezone.Text.Trim()
+    $p.auto_start = [bool]$chkAutoStart.Checked
     $p.browser_path = $txtBrowserPath.Text.Trim()
     $p.use_fingerprint = [bool]$chkUseFp.Checked
     $p.fingerprint_seed = $txtSeed.Text.Trim()
@@ -305,7 +342,7 @@ function Show-ProfileDialog($p) {
 # ---------------- 界面 ----------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "浏览器多配置代理启动器"
-$form.Size = New-Object System.Drawing.Size(660, 580)
+$form.Size = New-Object System.Drawing.Size(660, 610)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -354,7 +391,7 @@ Add-RowButton "全部启动" 138 {
     foreach ($p in $script:Profiles) { Start-Profile $p }
 }
 Add-RowButton "新增" 256 {
-    $new = [PSCustomObject]@{ name = ""; browser = "chrome"; proxy = ""; browser_path = ""; use_fingerprint = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @() }
+    $new = [PSCustomObject]@{ name = ""; browser = "chrome"; proxy = ""; browser_path = ""; use_fingerprint = $false; auto_start = $false; fingerprint_seed = ""; fingerprint_platform = ""; disable_spoofing = ""; lang = ""; timezone = ""; urls = @() }
     if (Show-ProfileDialog $new) {
         $script:Profiles += $new
         Save-Config; Refresh-List
@@ -383,10 +420,10 @@ Add-RowButton "删除" 492 {
 
 $lblDir = New-Object System.Windows.Forms.Label
 $lblDir.Text = "数据目录："; $lblDir.AutoSize = $true
-$lblDir.Location = New-Object System.Drawing.Point(20, 343)
+$lblDir.Location = New-Object System.Drawing.Point(20, 370)
 $form.Controls.Add($lblDir)
 $script:txtBaseDir = New-Object System.Windows.Forms.TextBox
-$script:txtBaseDir.Location = New-Object System.Drawing.Point(105, 340)
+$script:txtBaseDir.Location = New-Object System.Drawing.Point(105, 367)
 $script:txtBaseDir.Size = New-Object System.Drawing.Size(400, 24)
 $script:txtBaseDir.Add_Leave({
     $t = $script:txtBaseDir.Text.Trim()
@@ -399,7 +436,7 @@ $script:txtBaseDir.Add_Leave({
 $form.Controls.Add($script:txtBaseDir)
 $btnBrowse = New-Object System.Windows.Forms.Button
 $btnBrowse.Text = "浏览…"; $btnBrowse.Size = New-Object System.Drawing.Size(85, 28)
-$btnBrowse.Location = New-Object System.Drawing.Point(515, 338)
+$btnBrowse.Location = New-Object System.Drawing.Point(515, 365)
 $btnBrowse.Add_Click({
     $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
     $fbd.SelectedPath = $script:BaseDir
@@ -414,7 +451,7 @@ $form.Controls.Add($btnBrowse)
 
 $btnImport = New-Object System.Windows.Forms.Button
 $btnImport.Text = "导入配置"; $btnImport.Size = New-Object System.Drawing.Size(120, 36)
-$btnImport.Location = New-Object System.Drawing.Point(20, 385)
+$btnImport.Location = New-Object System.Drawing.Point(20, 407)
 $btnImport.Add_Click({
     $ofd = New-Object System.Windows.Forms.OpenFileDialog
     $ofd.Filter = "JSON 文件 (*.json)|*.json|所有文件 (*.*)|*.*"
@@ -440,7 +477,7 @@ $btnImport.Add_Click({
 $form.Controls.Add($btnImport)
 $btnExport = New-Object System.Windows.Forms.Button
 $btnExport.Text = "导出配置"; $btnExport.Size = New-Object System.Drawing.Size(120, 36)
-$btnExport.Location = New-Object System.Drawing.Point(150, 385)
+$btnExport.Location = New-Object System.Drawing.Point(150, 407)
 $btnExport.Add_Click({
     $sfd = New-Object System.Windows.Forms.SaveFileDialog
     $sfd.Filter = "JSON 文件 (*.json)|*.json"
@@ -454,7 +491,7 @@ $form.Controls.Add($btnExport)
 $lblConfig = New-Object System.Windows.Forms.Label
 $lblConfig.Text = "配置文件：profiles.json（与脚本同目录）"
 $lblConfig.AutoSize = $true
-$lblConfig.Location = New-Object System.Drawing.Point(285, 392)
+$lblConfig.Location = New-Object System.Drawing.Point(285, 414)
 $form.Controls.Add($lblConfig)
 
 $script:logBox = New-Object System.Windows.Forms.TextBox
@@ -462,7 +499,7 @@ $script:logBox.Multiline = $true
 $script:logBox.ReadOnly = $true
 $script:logBox.ScrollBars = "Vertical"
 $script:logBox.Font = New-Object System.Drawing.Font("微软雅黑", 9)
-$script:logBox.Location = New-Object System.Drawing.Point(20, 430)
+$script:logBox.Location = New-Object System.Drawing.Point(20, 450)
 $script:logBox.Size = New-Object System.Drawing.Size(600, 110)
 $form.Controls.Add($script:logBox)
 
@@ -475,5 +512,31 @@ if (Load-Config) {
 }
 $script:txtBaseDir.Text = $script:BaseDir
 Refresh-List
+
+$script:updatingAutostart = $false
+$chkLauncherAutostart = New-Object System.Windows.Forms.CheckBox
+$chkLauncherAutostart.Text = "登录时启动启动器（勾选的浏览器配置也会随启动器启动）"
+$chkLauncherAutostart.AutoSize = $true
+$chkLauncherAutostart.Location = New-Object System.Drawing.Point(20, 330)
+$chkLauncherAutostart.Checked = Get-LauncherAutostartEnabled
+$chkLauncherAutostart.Add_CheckedChanged({
+    if ($script:updatingAutostart) { return }
+    try {
+        Set-LauncherAutostart $chkLauncherAutostart.Checked
+        Write-Log $(if ($chkLauncherAutostart.Checked) { "已启用登录时启动启动器" } else { "已关闭登录时启动启动器" })
+    } catch {
+        $script:updatingAutostart = $true
+        $chkLauncherAutostart.Checked = Get-LauncherAutostartEnabled
+        $script:updatingAutostart = $false
+        [void][System.Windows.Forms.MessageBox]::Show("设置登录启动失败：$($_.Exception.Message)")
+    }
+})
+$form.Controls.Add($chkLauncherAutostart)
+
+$form.Add_Shown({
+    foreach ($p in $script:Profiles) {
+        if (Get-AutoStart $p) { Start-Profile $p }
+    }
+})
 
 [void]$form.ShowDialog()
