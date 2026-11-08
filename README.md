@@ -16,7 +16,7 @@ Browser-launcher 可按配置启动 Chrome、Edge 或 fingerprint-chromium。每
 - **Python 跨平台版**（`browser-launcher.py`）：支持 Windows、macOS 和 Linux，使用系统自带的 tkinter 图形界面。
 - **C# Windows 版**（`BrowserLauncher.CSharp`）：图形界面支持配置管理、导入导出和启动选中或全部配置；配置编辑页带字段说明，指纹参数可折叠。
 
-C# 版点击主窗口关闭按钮后会隐藏到系统托盘继续运行。右键托盘图标可直接启动任意配置或退出启动器；双击托盘图标可重新打开主界面。
+C# 版点击主窗口关闭按钮后会隐藏到系统托盘继续运行。右键托盘图标可切换 Windows 系统时区、直接启动任意配置或退出启动器；双击托盘图标可重新打开主界面。切换系统时区前会提示确认，因为该设置会影响整台电脑上的应用。
 
 Python 跨平台版、C# 版和 PowerShell 可视化配置版支持登录启动器及按配置自动启动浏览器。登录启动只打开启动器界面；每个配置可单独勾选是否在启动器打开时启动浏览器。Python 版支持 Windows、macOS 和 Linux；C# 版与 PowerShell 版支持 Windows。
 
@@ -103,7 +103,7 @@ sudo apt install python3-tk
 ### 启动语言和时区
 
 - **启动语言**：填写 `lang` 后会传入 `--lang` 和 `--accept-lang`，各系统均生效。
-- **普通 Chrome / Edge 的时区**：浏览器没有 `--timezone` 参数。Linux / macOS 版通过 `TZ` 环境变量设置子进程时区；Windows 上仍使用系统时区，启动器会在日志中提示设置未生效。
+- **普通 Chrome / Edge 的时区**：浏览器没有 `--timezone` 参数。Linux / macOS 版通过 `TZ` 环境变量设置子进程时区；Windows 上仍使用系统时区，配置里的 `timezone` 不会修改系统。C# 版可在托盘右键菜单切换 Windows 系统时区，这会影响整台电脑上的应用。
 - **fingerprint 浏览器的时区**：带补丁的 Chromium 支持 `--timezone=<时区>`，Windows 上也能设置。请将“浏览器 exe 路径”指向 fingerprint 浏览器自己的 exe（通常位于安装目录的 `Application\chrome.exe`）；留空时会尝试自动查找。
 
 ### 指纹开关和参数

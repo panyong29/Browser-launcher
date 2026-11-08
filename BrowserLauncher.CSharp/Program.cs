@@ -99,6 +99,34 @@ internal sealed class MainForm : Form
     {
         trayMenu.Items.Clear();
         trayMenu.Items.Add("打开启动器", null, (_, _) => RestoreFromTray());
+        var timezoneMenu = new ToolStripMenuItem("Windows 系统时区");
+        timezoneMenu.DropDownItems.Add(new ToolStripMenuItem("当前：" + TimeZoneInfo.Local.DisplayName) { Enabled = false });
+        timezoneMenu.DropDownItems.Add(new ToolStripSeparator());
+        var commonZones = new (string Id, string Label)[]
+        {
+            ("China Standard Time", "中国标准时间（北京/上海）"),
+            ("Tokyo Standard Time", "日本标准时间（东京）"),
+            ("Singapore Standard Time", "新加坡标准时间"),
+            ("UTC", "协调世界时（UTC）"),
+            ("GMT Standard Time", "英国时间（伦敦）"),
+            ("Eastern Standard Time", "美国东部时间"),
+            ("Pacific Standard Time", "美国太平洋时间")
+        };
+        var zonesById = TimeZoneInfo.GetSystemTimeZones().ToDictionary(zone => zone.Id);
+        foreach (var (id, label) in commonZones)
+        {
+            if (!zonesById.TryGetValue(id, out var zone)) continue;
+            var zoneItem = new ToolStripMenuItem(label)
+            {
+                Checked = zone.Id == TimeZoneInfo.Local.Id,
+                CheckOnClick = false
+            };
+            zoneItem.Click += (_, _) => PromptAndSetSystemTimeZone(zone);
+            timezoneMenu.DropDownItems.Add(zoneItem);
+        }
+        timezoneMenu.DropDownItems.Add(new ToolStripSeparator());
+        timezoneMenu.DropDownItems.Add("选择其他时区…", null, (_, _) => ChooseSystemTimeZone());
+        trayMenu.Items.Add(timezoneMenu);
         trayMenu.Items.Add(new ToolStripSeparator());
         foreach (var profile in config.Profiles.ToArray())
         {
@@ -107,6 +135,75 @@ internal sealed class MainForm : Form
         }
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("退出", null, (_, _) => ExitApplication());
+    }
+
+    private void ChooseSystemTimeZone()
+    {
+        var zones = TimeZoneInfo.GetSystemTimeZones().OrderBy(zone => zone.DisplayName).ToList();
+        using var dialog = new Form
+        {
+            Text = "选择 Windows 系统时区",
+            Width = 620,
+            Height = 150,
+            StartPosition = FormStartPosition.CenterScreen,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false
+        };
+        var selector = new ComboBox { Left = 16, Top = 16, Width = 570, DropDownStyle = ComboBoxStyle.DropDownList };
+        selector.DisplayMember = nameof(TimeZoneInfo.DisplayName);
+        selector.DataSource = zones;
+        selector.SelectedItem = zones.FirstOrDefault(zone => zone.Id == TimeZoneInfo.Local.Id);
+        dialog.Controls.Add(selector);
+        var apply = new Button { Text = "切换", Left = 410, Top = 58, Width = 80, DialogResult = DialogResult.None };
+        apply.Click += (_, _) =>
+        {
+            if (selector.SelectedItem is TimeZoneInfo zone && PromptAndSetSystemTimeZone(zone))
+            {
+                dialog.DialogResult = DialogResult.OK;
+                dialog.Close();
+            }
+        };
+        var cancel = new Button { Text = "取消", Left = 506, Top = 58, Width = 80, DialogResult = DialogResult.Cancel };
+        dialog.Controls.Add(apply);
+        dialog.Controls.Add(cancel);
+        dialog.AcceptButton = apply;
+        dialog.CancelButton = cancel;
+        dialog.ShowDialog();
+    }
+
+    private static bool PromptAndSetSystemTimeZone(TimeZoneInfo zone)
+    {
+        var choice = MessageBox.Show(
+            $"将 Windows 系统时区切换为：\n{zone.DisplayName}\n\n这会影响整台电脑上的应用和网站时区检测。是否继续？",
+            "切换系统时区", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (choice != DialogResult.Yes) return false;
+
+        try
+        {
+            var tzutil = Path.Combine(Environment.SystemDirectory, "tzutil.exe");
+            using var process = Process.Start(new ProcessStartInfo(tzutil, "/s " + QuoteArgument(zone.Id))
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true
+            });
+            if (process == null) throw new InvalidOperationException("无法启动 Windows 时区工具 tzutil.exe。");
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Windows 拒绝了时区更改。" : error.Trim());
+
+            TimeZoneInfo.ClearCachedData();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "切换系统时区失败。当前 Windows 账户可能没有更改时区的权限。\n\n" + ex.Message,
+                "时区切换失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return false;
+        }
     }
 
     private void ExitApplication()
