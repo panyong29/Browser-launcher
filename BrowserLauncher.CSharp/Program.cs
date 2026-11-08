@@ -53,16 +53,67 @@ internal sealed class MainForm : Form
     private readonly TextBox log = new();
     private CheckBox autoStartLauncher = new();
     private bool changingAutostartToggle;
+    private readonly NotifyIcon trayIcon = new();
+    private readonly ContextMenuStrip trayMenu = new();
+    private bool exitRequested;
 
     public MainForm()
     {
         Text = "浏览器多配置代理启动器（C#）";
         Width = 980; Height = 680; MinimumSize = new Size(840, 580); StartPosition = FormStartPosition.CenterScreen;
         BuildUi(); LoadConfig(); RefreshGrid();
+        trayIcon.Icon = SystemIcons.Application;
+        trayIcon.Text = "Browser Launcher";
+        trayIcon.ContextMenuStrip = trayMenu;
+        trayIcon.Visible = true;
+        trayIcon.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) RestoreFromTray(); };
+        trayMenu.Opening += (_, _) => RefreshTrayMenu();
+        FormClosing += (_, e) =>
+        {
+            if (!exitRequested && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                Hide();
+            }
+        };
+        FormClosed += (_, _) =>
+        {
+            trayIcon.Visible = false;
+            trayIcon.Dispose();
+            trayMenu.Dispose();
+        };
         Shown += (_, _) => BeginInvoke(new Action(() =>
         {
             foreach (var profile in config.Profiles.Where(p => p.AutoStart)) Launch(profile);
         }));
+    }
+
+    private void RestoreFromTray()
+    {
+        Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    private void RefreshTrayMenu()
+    {
+        trayMenu.Items.Clear();
+        trayMenu.Items.Add("打开启动器", null, (_, _) => RestoreFromTray());
+        trayMenu.Items.Add(new ToolStripSeparator());
+        foreach (var profile in config.Profiles.ToArray())
+        {
+            var label = string.IsNullOrWhiteSpace(profile.Name) ? "未命名配置" : profile.Name;
+            trayMenu.Items.Add(new ToolStripMenuItem(label, null, (_, _) => Launch(profile)));
+        }
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("退出", null, (_, _) => ExitApplication());
+    }
+
+    private void ExitApplication()
+    {
+        exitRequested = true;
+        trayIcon.Visible = false;
+        Close();
     }
 
     private void BuildUi()

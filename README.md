@@ -16,6 +16,8 @@ Browser-launcher 可按配置启动 Chrome、Edge 或 fingerprint-chromium。每
 - **Python 跨平台版**（`browser-launcher.py`）：支持 Windows、macOS 和 Linux，使用系统自带的 tkinter 图形界面。
 - **C# Windows 版**（`BrowserLauncher.CSharp`）：图形界面支持配置管理、导入导出和启动选中或全部配置；配置编辑页带字段说明，指纹参数可折叠。
 
+C# 版点击主窗口关闭按钮后会隐藏到系统托盘继续运行。右键托盘图标可直接启动任意配置或退出启动器；双击托盘图标可重新打开主界面。
+
 Python 跨平台版、C# 版和 PowerShell 可视化配置版支持登录启动器及按配置自动启动浏览器。登录启动只打开启动器界面；每个配置可单独勾选是否在启动器打开时启动浏览器。Python 版支持 Windows、macOS 和 Linux；C# 版与 PowerShell 版支持 Windows。
 
 ## 下载 C# 版
